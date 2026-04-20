@@ -4,7 +4,7 @@
   "description": "My Life Companion Welfare Management System",
   "scripts": {
     "start": "node server/src/app.js",
-    "build": "cd client && npm install && npm run build",
+    "build": "cd client && npm install --include=dev && npm run build",
     "heroku-postbuild": "cd server && npm install && cd .. && npm run build",
     "dev": "concurrently \"cd server && npx nodemon src/app.js\" \"cd client && npm run dev\""
   },
