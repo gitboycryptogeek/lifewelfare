@@ -1,14 +1,17 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../context/AuthContext';
 import Layout from '../../components/Layout';
 import StatusBadge from '../../components/StatusBadge';
+import ChangePasswordModal from '../../components/ChangePasswordModal';
 import api from '../../services/api';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
-import { MdPersonAdd, MdPeople, MdCheckCircle, MdHourglassEmpty, MdTrendingUp } from 'react-icons/md';
+import { MdPersonAdd, MdPeople, MdCheckCircle, MdHourglassEmpty, MdTrendingUp, MdLock } from 'react-icons/md';
 
 export default function AgentDashboard() {
   const { user } = useAuth();
+  const [showChangePw, setShowChangePw] = useState(false);
 
   const { data: leaderboard } = useQuery({
     queryKey: ['agent-leaderboard'],
@@ -44,6 +47,7 @@ export default function AgentDashboard() {
 
   return (
     <Layout title="Agent Dashboard">
+      {showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />}
       <div className="space-y-6 max-w-5xl">
         {/* Quick action */}
         <div className="bg-brand-navy text-white rounded-xl p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -51,9 +55,17 @@ export default function AgentDashboard() {
             <h2 className="font-heading text-xl font-bold">Welcome, {user.full_name.split(' ')[0]}</h2>
             <p className="text-gray-400 text-sm mt-1">Register new members and track your recruitment performance.</p>
           </div>
-          <Link to="/agent/register" className="btn-primary flex items-center gap-2 whitespace-nowrap">
-            <MdPersonAdd size={18} /> Register Member
-          </Link>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowChangePw(true)}
+              className="btn-outline flex items-center gap-2 whitespace-nowrap text-sm py-2 px-4"
+            >
+              <MdLock size={16} /> Change Password
+            </button>
+            <Link to="/agent/register" className="btn-primary flex items-center gap-2 whitespace-nowrap">
+              <MdPersonAdd size={18} /> Register Member
+            </Link>
+          </div>
         </div>
 
         {/* Stats */}

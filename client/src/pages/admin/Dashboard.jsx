@@ -1,14 +1,18 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Layout from '../../components/Layout';
 import api from '../../services/api';
 import StatusBadge from '../../components/StatusBadge';
+import ChangePasswordModal from '../../components/ChangePasswordModal';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
+import { MdLock } from 'react-icons/md';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 
 export default function AdminDashboard() {
+  const [showChangePw, setShowChangePw] = useState(false);
   const { data: summary, isLoading } = useQuery({
     queryKey: ['admin-summary'],
     queryFn: async () => {
@@ -63,7 +67,17 @@ export default function AdminDashboard() {
 
   return (
     <Layout title="Admin Dashboard">
+      {showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />}
       <div className="space-y-6 max-w-7xl">
+        {/* Change password button */}
+        <div className="flex justify-end">
+          <button
+            onClick={() => setShowChangePw(true)}
+            className="btn-outline flex items-center gap-2 text-sm py-2 px-4"
+          >
+            <MdLock size={16} /> Change Password
+          </button>
+        </div>
         {/* Stats grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {statCards.map((s) => (

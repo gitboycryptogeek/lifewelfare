@@ -130,4 +130,34 @@ async function me(req, res, next) {
   }
 }
 
-module.exports = { login, refresh, logout, me };
+async function changePassword(req, res, next) {
+  try {
+    const { old_password, new_password } = req.body;
+
+    if (!old_password || !new_password) {
+      return res.status(400).json({ success: false, error: 'Both old and new passwords are required' });
+    }
+    if (new_password.length < 6) {
+      return res.status(400).json({ success: false, error: 'New password must be at least 6 characters' });
+    }
+
+    const result = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    const valid = await bcrypt.compare(old_password, result.rows[0].password_hash);
+    if (!valid) {
+      return res.status(401).json({ success: false, error: 'Current password is incorrect' });
+    }
+
+    const hash = await bcrypt.hash(new_password, 12);
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
+
+    return res.json({ success: true, message: 'Password changed successfully' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { login, refresh, logout, me, changePassword };

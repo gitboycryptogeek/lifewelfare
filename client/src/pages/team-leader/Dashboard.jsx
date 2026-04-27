@@ -1,14 +1,17 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../context/AuthContext';
 import Layout from '../../components/Layout';
+import ChangePasswordModal from '../../components/ChangePasswordModal';
 import api from '../../services/api';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
-import { MdGroups, MdPeople, MdCheckCircle, MdHourglassEmpty, MdPrint } from 'react-icons/md';
+import { MdGroups, MdPeople, MdCheckCircle, MdHourglassEmpty, MdPrint, MdLock } from 'react-icons/md';
 import { printTable } from '../../utils/print';
 
 export default function TeamLeaderDashboard() {
   const { user } = useAuth();
+  const [showChangePw, setShowChangePw] = useState(false);
 
   const { data: dashStats } = useQuery({
     queryKey: ['tl-dashboard'],
@@ -53,11 +56,20 @@ export default function TeamLeaderDashboard() {
 
   return (
     <Layout title="Team Leader Dashboard">
+      {showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />}
       <div className="space-y-6 max-w-5xl">
         {/* Welcome banner */}
-        <div className="bg-brand-navy text-white rounded-xl p-6">
-          <h2 className="font-heading text-xl font-bold">Welcome, {user.full_name.split(' ')[0]}</h2>
-          <p className="text-gray-400 text-sm mt-1">Monitor your team's recruitment performance.</p>
+        <div className="bg-brand-navy text-white rounded-xl p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <h2 className="font-heading text-xl font-bold">Welcome, {user.full_name.split(' ')[0]}</h2>
+            <p className="text-gray-400 text-sm mt-1">Monitor your team's recruitment performance.</p>
+          </div>
+          <button
+            onClick={() => setShowChangePw(true)}
+            className="btn-outline flex items-center gap-2 whitespace-nowrap text-sm py-2 px-4"
+          >
+            <MdLock size={16} /> Change Password
+          </button>
         </div>
 
         {/* Stats */}
