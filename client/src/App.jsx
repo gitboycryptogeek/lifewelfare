@@ -20,6 +20,8 @@ import AdminCommunicate from './pages/admin/Communicate';
 import AdminReports from './pages/admin/Reports';
 import AdminUsers from './pages/admin/Users';
 import AdminAudit from './pages/admin/Audit';
+import AdminTeamLeaders from './pages/admin/TeamLeaders';
+import TeamLeaderDashboard from './pages/team-leader/Dashboard';
 
 export default function App() {
   return (
@@ -49,6 +51,11 @@ export default function App() {
           <ProtectedRoute roles={['agent']}><AgentRegister /></ProtectedRoute>
         } />
 
+        {/* Team Leader */}
+        <Route path="/team-leader/dashboard" element={
+          <ProtectedRoute roles={['team_leader']}><TeamLeaderDashboard /></ProtectedRoute>
+        } />
+
         {/* Admin */}
         <Route path="/admin/dashboard" element={
           <ProtectedRoute roles={['admin', 'super_admin']}><AdminDashboard /></ProtectedRoute>
@@ -73,6 +80,9 @@ export default function App() {
         } />
         <Route path="/admin/audit" element={
           <ProtectedRoute roles={['super_admin']}><AdminAudit /></ProtectedRoute>
+        } />
+        <Route path="/admin/team-leaders" element={
+          <ProtectedRoute roles={['super_admin']}><AdminTeamLeaders /></ProtectedRoute>
         } />
 
         <Route path="*" element={<Navigate to="/" replace />} />

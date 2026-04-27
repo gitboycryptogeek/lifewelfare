@@ -17,6 +17,7 @@ const roleRedirects = {
   agent: '/agent/dashboard',
   admin: '/admin/dashboard',
   super_admin: '/admin/dashboard',
+  team_leader: '/team-leader/dashboard',
 };
 
 export default function Login() {

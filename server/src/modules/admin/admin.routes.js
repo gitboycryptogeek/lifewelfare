@@ -14,11 +14,21 @@ router.post(
     body('full_name').notEmpty().withMessage('Full name is required'),
     body('phone').notEmpty().withMessage('Phone is required'),
     body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
-    body('role').isIn(['agent', 'admin', 'super_admin']).withMessage('Invalid role'),
+    body('role').isIn(['agent', 'admin', 'super_admin', 'team_leader']).withMessage('Invalid role'),
   ],
   ctrl.createUser
 );
 router.patch('/users/:id/deactivate', verifyToken, requireRole('super_admin'), ctrl.deactivateUser);
 router.get('/audit-logs', verifyToken, requireRole('super_admin'), ctrl.getAuditLogs);
+
+router.get('/team-leaders', verifyToken, requireRole('super_admin'), ctrl.listTeamLeaders);
+router.patch(
+  '/agents/:agentId/assign-team-leader',
+  verifyToken,
+  requireRole('super_admin'),
+  [body('teamLeaderId').isUUID().withMessage('teamLeaderId must be a valid UUID')],
+  ctrl.assignTeamLeader
+);
+router.delete('/agents/:agentId/team-leader', verifyToken, requireRole('super_admin'), ctrl.unassignTeamLeader);
 
 module.exports = router;

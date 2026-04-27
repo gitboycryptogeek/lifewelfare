@@ -17,7 +17,7 @@ async function listUsers(req, res, next) {
     }
 
     const result = await pool.query(
-      `SELECT id, full_name, email, phone, role, is_active, last_login, created_at
+      `SELECT id, full_name, email, phone, role, is_active, last_login, created_at, team_leader_id
        FROM users ${where}
        ORDER BY created_at DESC
        LIMIT $1 OFFSET $2`,
@@ -134,4 +134,112 @@ async function getAuditLogs(req, res, next) {
   }
 }
 
-module.exports = { listUsers, createUser, deactivateUser, getAuditLogs };
+async function listTeamLeaders(req, res, next) {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+
+    const result = await pool.query(
+      `SELECT u.id, u.full_name, u.phone, u.email, u.is_active, u.created_at,
+              COUNT(a.id) AS agent_count
+       FROM users u
+       LEFT JOIN users a ON a.team_leader_id = u.id AND a.role = 'agent'
+       WHERE u.role = 'team_leader'
+       GROUP BY u.id, u.full_name, u.phone, u.email, u.is_active, u.created_at
+       ORDER BY u.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+
+    const countResult = await pool.query(`SELECT COUNT(*) FROM users WHERE role = 'team_leader'`);
+
+    return res.json({
+      success: true,
+      data: result.rows,
+      meta: {
+        total: parseInt(countResult.rows[0].count),
+        page,
+        limit,
+        pages: Math.ceil(parseInt(countResult.rows[0].count) / limit),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function assignTeamLeader(req, res, next) {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, error: errors.array()[0].msg });
+    }
+
+    const { agentId } = req.params;
+    const { teamLeaderId } = req.body;
+
+    const agentResult = await pool.query('SELECT id, role, team_leader_id FROM users WHERE id = $1', [agentId]);
+    if (agentResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Agent not found' });
+    }
+    if (agentResult.rows[0].role !== 'agent') {
+      return res.status(400).json({ success: false, error: 'User is not an agent' });
+    }
+
+    const leaderResult = await pool.query('SELECT id, role FROM users WHERE id = $1', [teamLeaderId]);
+    if (leaderResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Team leader not found' });
+    }
+    if (leaderResult.rows[0].role !== 'team_leader') {
+      return res.status(400).json({ success: false, error: 'User is not a team leader' });
+    }
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM users WHERE team_leader_id = $1 AND role = 'agent'`,
+      [teamLeaderId]
+    );
+    const currentCount = parseInt(countResult.rows[0].count);
+
+    const agentCurrentLeader = agentResult.rows[0].team_leader_id;
+    const isAlreadyOnThisLeader = agentCurrentLeader === teamLeaderId;
+
+    if (currentCount >= 10 && !isAlreadyOnThisLeader) {
+      return res.status(409).json({ success: false, error: 'Team leader already has the maximum of 10 agents' });
+    }
+
+    const result = await pool.query(
+      `UPDATE users SET team_leader_id = $1, updated_at = NOW()
+       WHERE id = $2
+       RETURNING id, full_name, team_leader_id`,
+      [teamLeaderId, agentId]
+    );
+
+    return res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function unassignTeamLeader(req, res, next) {
+  try {
+    const { agentId } = req.params;
+
+    const result = await pool.query(
+      `UPDATE users SET team_leader_id = NULL, updated_at = NOW()
+       WHERE id = $1 AND role = 'agent'
+       RETURNING id, full_name, team_leader_id`,
+      [agentId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Agent not found' });
+    }
+
+    return res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { listUsers, createUser, deactivateUser, getAuditLogs, listTeamLeaders, assignTeamLeader, unassignTeamLeader };

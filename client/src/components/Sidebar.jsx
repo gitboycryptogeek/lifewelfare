@@ -2,7 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   MdDashboard, MdPeople, MdAssignment, MdChat, MdBarChart,
-  MdSecurity, MdHistory, MdLogout, MdPersonAdd, MdPerson,
+  MdSecurity, MdHistory, MdLogout, MdPersonAdd, MdPerson, MdGroups,
 } from 'react-icons/md';
 import toast from 'react-hot-toast';
 
@@ -15,6 +15,9 @@ const navItems = {
   agent: [
     { to: '/agent/dashboard', icon: MdDashboard, label: 'Dashboard' },
     { to: '/agent/register', icon: MdPersonAdd, label: 'Register Member' },
+  ],
+  team_leader: [
+    { to: '/team-leader/dashboard', icon: MdDashboard, label: 'Dashboard' },
   ],
   admin: [
     { to: '/admin/dashboard', icon: MdDashboard, label: 'Dashboard' },
@@ -30,6 +33,7 @@ const navItems = {
     { to: '/admin/communicate', icon: MdChat, label: 'Communications' },
     { to: '/admin/reports', icon: MdBarChart, label: 'Reports' },
     { to: '/admin/users', icon: MdSecurity, label: 'Users' },
+    { to: '/admin/team-leaders', icon: MdGroups, label: 'Team Leaders' },
     { to: '/admin/audit', icon: MdHistory, label: 'Audit Trail' },
   ],
 };

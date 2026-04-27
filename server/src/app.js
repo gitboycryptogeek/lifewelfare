@@ -18,6 +18,7 @@ const claimRoutes = require('./modules/claims/claims.routes');
 const communicationRoutes = require('./modules/communications/communications.routes');
 const reportRoutes = require('./modules/reports/reports.routes');
 const adminRoutes = require('./modules/admin/admin.routes');
+const teamLeaderRoutes = require('./modules/team-leader/teamLeader.routes');
 
 const app = express();
 
@@ -51,6 +52,7 @@ app.use('/api/v1/claims', claimRoutes);
 app.use('/api/v1/communications', communicationRoutes);
 app.use('/api/v1/reports', reportRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/team-leader', teamLeaderRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

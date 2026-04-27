@@ -141,6 +141,7 @@ export default function AdminUsers() {
                 <label className="label">Role</label>
                 <select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))} className="input">
                   <option value="agent">Agent</option>
+                  <option value="team_leader">Team Leader</option>
                   <option value="admin">Admin</option>
                   <option value="super_admin">Super Admin</option>
                 </select>
