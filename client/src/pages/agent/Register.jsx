@@ -79,9 +79,9 @@ export default function AgentRegister() {
   const coverOptions = [
     { value: 1, label: 'Option 1 — KES 1,500/yr — Individual basic' },
     { value: 2, label: 'Option 2 — KES 2,500/yr — Individual + spouse' },
-    { value: 3, label: 'Option 3 — KES 3,500/yr — Family (2+2)' },
-    { value: 4, label: 'Option 4 — KES 6,000/yr — Family (2+4)' },
-    { value: 5, label: 'Option 5 — KES 10,000/yr — Extended + parents' },
+    { value: 3, label: 'Option 3 — KES 6,000/yr — Family (2+2)' },
+    { value: 4, label: 'Option 4 — KES 9,000/yr — Family (2+4)' },
+    { value: 5, label: 'Option 5 — KES 12,000/yr — Extended + parents' },
     { value: 6, label: 'Option 6 — KES 15,000/yr — Full extended' },
   ];
 

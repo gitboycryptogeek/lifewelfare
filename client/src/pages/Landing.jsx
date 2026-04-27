@@ -6,9 +6,9 @@ import {
 const coverPlans = [
   { option: 1, premium: 'KES 1,500', cover: 'KES 50,000', description: 'Individual basic cover' },
   { option: 2, premium: 'KES 2,500', cover: 'KES 100,000', description: 'Individual + spouse' },
-  { option: 3, premium: 'KES 3,500', cover: 'KES 150,000', description: 'Family (2 adults + 2 children)' },
-  { option: 4, premium: 'KES 6,000', cover: 'KES 200,000', description: 'Family (2 adults + 4 children)' },
-  { option: 5, premium: 'KES 10,000', cover: 'KES 300,000', description: 'Extended family + parents' },
+  { option: 3, premium: 'KES 6,000', cover: 'KES 150,000', description: 'Family (2 adults + 2 children)' },
+  { option: 4, premium: 'KES 9,000', cover: 'KES 200,000', description: 'Family (2 adults + 4 children)' },
+  { option: 5, premium: 'KES 12,000', cover: 'KES 300,000', description: 'Extended family + parents' },
   { option: 6, premium: 'KES 15,000', cover: 'KES 500,000', description: 'Full extended family cover' },
 ];
 
