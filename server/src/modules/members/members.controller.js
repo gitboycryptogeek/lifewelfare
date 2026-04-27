@@ -476,6 +476,54 @@ async function removeBeneficiary(req, res, next) {
   }
 }
 
+async function uploadDocuments(req, res, next) {
+  try {
+    const { id } = req.params;
+
+    const memberCheck = await pool.query('SELECT id FROM members WHERE id = $1', [id]);
+    if (memberCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Member not found' });
+    }
+
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ success: false, error: 'No files uploaded' });
+    }
+
+    const results = [];
+    for (const file of req.files) {
+      const relativePath = 'documents/' + file.filename;
+      const result = await pool.query(
+        `INSERT INTO member_documents (member_id, original_name, file_path, file_type, uploaded_by)
+         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [id, file.originalname, relativePath, file.mimetype, req.user.id]
+      );
+      results.push(result.rows[0]);
+    }
+
+    return res.status(201).json({ success: true, data: results, message: `${results.length} document(s) uploaded` });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function getDocuments(req, res, next) {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      `SELECT d.*, u.full_name AS uploaded_by_name
+       FROM member_documents d
+       LEFT JOIN users u ON u.id = d.uploaded_by
+       WHERE d.member_id = $1
+       ORDER BY d.created_at ASC`,
+      [id]
+    );
+    return res.json({ success: true, data: result.rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function getMemberClaims(req, res, next) {
   try {
     const { id } = req.params;
@@ -502,5 +550,5 @@ module.exports = {
   approveMember, updateStatus, searchMembers, downloadCard,
   addDependent, getDependents, removeDependent,
   addBeneficiary, getBeneficiaries, removeBeneficiary,
-  getMemberClaims,
+  getMemberClaims, uploadDocuments, getDocuments,
 };

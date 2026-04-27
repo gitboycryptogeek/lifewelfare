@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -6,7 +6,7 @@ import { useMutation } from '@tanstack/react-query';
 import Layout from '../../components/Layout';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
-import { MdAdd, MdDelete } from 'react-icons/md';
+import { MdAdd, MdDelete, MdUploadFile, MdInsertDriveFile } from 'react-icons/md';
 
 const schema = z.object({
   full_name: z.string().min(2, 'Full name required'),
@@ -37,8 +37,12 @@ const schema = z.object({
 
 export default function AgentRegister() {
   const [step, setStep] = useState(1);
+  const [registeredMemberId, setRegisteredMemberId] = useState(null);
+  const [docFiles, setDocFiles] = useState([]);
+  const [docUploading, setDocUploading] = useState(false);
+  const fileInputRef = useRef(null);
 
-  const { register, handleSubmit, control, formState: { errors }, getValues, reset } = useForm({
+  const { register, handleSubmit, control, formState: { errors }, reset } = useForm({
     resolver: zodResolver(schema),
     defaultValues: {
       dependents: [],
@@ -52,15 +56,12 @@ export default function AgentRegister() {
 
   const mutation = useMutation({
     mutationFn: async (values) => {
-      // Register member
       const { data } = await api.post('/members/register', values);
       const memberId = data.data.id;
 
-      // Add dependents
       for (const dep of values.dependents || []) {
         await api.post(`/members/${memberId}/dependents`, dep);
       }
-      // Add beneficiaries
       for (const ben of values.beneficiaries || []) {
         await api.post(`/members/${memberId}/beneficiaries`, ben);
       }
@@ -69,12 +70,42 @@ export default function AgentRegister() {
     onSuccess: (data) => {
       toast.success(`${data.full_name} registered successfully!`);
       reset();
-      setStep(1);
+      setRegisteredMemberId(data.id);
+      setStep(4);
     },
     onError: (err) => {
       toast.error(err.response?.data?.error || 'Registration failed');
     },
   });
+
+  async function handleDocUpload() {
+    if (!registeredMemberId || docFiles.length === 0) return;
+    setDocUploading(true);
+    try {
+      const formData = new FormData();
+      docFiles.forEach((f) => formData.append('documents', f));
+      await api.post(`/members/${registeredMemberId}/documents`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      toast.success('Documents uploaded!');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Document upload failed');
+    } finally {
+      setDocUploading(false);
+      setDocFiles([]);
+      setRegisteredMemberId(null);
+      setStep(1);
+    }
+  }
+
+  function handleFileSelect(e) {
+    const selected = Array.from(e.target.files);
+    setDocFiles((prev) => {
+      const existing = new Set(prev.map((f) => f.name));
+      return [...prev, ...selected.filter((f) => !existing.has(f.name))];
+    });
+    e.target.value = '';
+  }
 
   const coverOptions = [
     { value: 1, label: 'Option 1 — KES 1,500/yr — Individual basic' },
@@ -85,22 +116,22 @@ export default function AgentRegister() {
     { value: 6, label: 'Option 6 — KES 15,000/yr — Full extended' },
   ];
 
+  const stepLabels = ['Member Details', 'Dependents', 'Beneficiaries', 'Documents'];
+
   return (
     <Layout title="Register New Member">
       <div className="max-w-3xl">
         {/* Step indicator */}
         <div className="flex items-center gap-2 mb-8">
-          {[1, 2, 3].map((s) => (
+          {[1, 2, 3, 4].map((s) => (
             <div key={s} className="flex items-center gap-2">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${
                 step >= s ? 'bg-brand-gold text-white' : 'bg-gray-200 text-gray-500'
               }`}>{s}</div>
-              {s < 3 && <div className={`h-0.5 w-12 ${step > s ? 'bg-brand-gold' : 'bg-gray-200'}`} />}
+              {s < 4 && <div className={`h-0.5 w-10 ${step > s ? 'bg-brand-gold' : 'bg-gray-200'}`} />}
             </div>
           ))}
-          <div className="ml-3 text-sm text-gray-500">
-            {step === 1 ? 'Member Details' : step === 2 ? 'Dependents' : 'Beneficiaries'}
-          </div>
+          <div className="ml-3 text-sm text-gray-500">{stepLabels[step - 1]}</div>
         </div>
 
         <form onSubmit={handleSubmit((v) => mutation.mutate(v))}>
@@ -304,6 +335,74 @@ export default function AgentRegister() {
                 >
                   {mutation.isPending ? 'Submitting…' : 'Submit Registration'}
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 4: Documents (post-registration, optional) */}
+          {step === 4 && (
+            <div className="card space-y-4">
+              <div>
+                <h3 className="font-heading font-bold text-brand-navy text-lg">Supporting Documents</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  Attach copies of ID, passport, birth certificate, or any other supporting documents. Optional — you can skip this step.
+                </p>
+              </div>
+
+              <div
+                className="border-2 border-dashed border-gray-200 rounded-lg p-8 text-center cursor-pointer hover:border-brand-gold transition-colors"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <MdUploadFile size={36} className="mx-auto text-gray-300 mb-2" />
+                <p className="text-sm font-medium text-gray-600">Click to select files</p>
+                <p className="text-xs text-gray-400 mt-1">PDF, PNG, or JPG — max 5 MB each</p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept=".pdf,.png,.jpg,.jpeg"
+                  className="hidden"
+                  onChange={handleFileSelect}
+                />
+              </div>
+
+              {docFiles.length > 0 && (
+                <ul className="space-y-2">
+                  {docFiles.map((f, i) => (
+                    <li key={i} className="flex items-center gap-3 bg-gray-50 rounded-lg px-4 py-2.5 text-sm">
+                      <MdInsertDriveFile size={18} className="text-brand-gold flex-shrink-0" />
+                      <span className="flex-1 truncate text-gray-700">{f.name}</span>
+                      <span className="text-xs text-gray-400 flex-shrink-0">{(f.size / 1024).toFixed(0)} KB</span>
+                      <button
+                        type="button"
+                        onClick={() => setDocFiles(docFiles.filter((_, idx) => idx !== i))}
+                        className="text-red-400 hover:text-red-600"
+                      >
+                        <MdDelete size={16} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="flex justify-between items-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => { setStep(1); setRegisteredMemberId(null); setDocFiles([]); }}
+                  className="btn-outline"
+                >
+                  {docFiles.length === 0 ? 'Skip & Register Another' : 'Skip Uploads'}
+                </button>
+                {docFiles.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleDocUpload}
+                    disabled={docUploading}
+                    className="btn-primary"
+                  >
+                    {docUploading ? 'Uploading…' : `Upload ${docFiles.length} File${docFiles.length > 1 ? 's' : ''}`}
+                  </button>
+                )}
               </div>
             </div>
           )}

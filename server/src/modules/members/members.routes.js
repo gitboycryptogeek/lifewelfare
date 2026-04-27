@@ -13,7 +13,12 @@ const storage = multer.diskStorage({
     cb(null, `${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`);
   },
 });
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
+const fileFilter = (req, file, cb) => {
+  const allowed = ['application/pdf', 'image/png', 'image/jpeg'];
+  if (allowed.includes(file.mimetype)) cb(null, true);
+  else cb(new Error('Only PDF, PNG, or JPG files are allowed'), false);
+};
+const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 }, fileFilter });
 
 const registrationValidation = [
   body('full_name').notEmpty().trim().withMessage('Full name is required'),
@@ -89,5 +94,15 @@ router.delete('/:id/beneficiaries/:benId', verifyToken, requireRole('admin', 'su
 
 // Claims for a member
 router.get('/:id/claims', verifyToken, ctrl.getMemberClaims);
+
+// Documents
+router.post(
+  '/:id/documents',
+  verifyToken,
+  requireRole('agent', 'admin', 'super_admin'),
+  upload.array('documents', 10),
+  ctrl.uploadDocuments
+);
+router.get('/:id/documents', verifyToken, ctrl.getDocuments);
 
 module.exports = router;

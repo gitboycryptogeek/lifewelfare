@@ -6,7 +6,7 @@ import StatusBadge from '../../components/StatusBadge';
 import api from '../../services/api';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
-import { MdCheckCircle, MdEdit, MdDownload } from 'react-icons/md';
+import { MdCheckCircle, MdEdit, MdDownload, MdInsertDriveFile } from 'react-icons/md';
 
 export default function AdminMemberDetail() {
   const { id } = useParams();
@@ -46,6 +46,15 @@ export default function AdminMemberDetail() {
     queryKey: ['member-claims', id],
     queryFn: async () => {
       const { data } = await api.get(`/members/${id}/claims`);
+      return data.data;
+    },
+    enabled: !!id,
+  });
+
+  const { data: documents } = useQuery({
+    queryKey: ['member-documents', id],
+    queryFn: async () => {
+      const { data } = await api.get(`/members/${id}/documents`);
       return data.data;
     },
     enabled: !!id,
@@ -217,6 +226,38 @@ export default function AdminMemberDetail() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+        </div>
+
+        {/* Supporting Documents */}
+        <div className="card">
+          <h3 className="font-heading font-bold text-brand-navy mb-4">
+            Supporting Documents ({documents?.length || 0})
+          </h3>
+          {!documents?.length ? (
+            <p className="text-gray-500 text-sm">No documents uploaded.</p>
+          ) : (
+            <div className="space-y-2">
+              {documents.map((doc) => (
+                <div key={doc.id} className="flex items-center gap-3 bg-gray-50 rounded-lg px-4 py-3">
+                  <MdInsertDriveFile size={20} className="text-brand-gold flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-brand-navy truncate">{doc.original_name}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Uploaded by {doc.uploaded_by_name || 'Unknown'} · {format(new Date(doc.created_at), 'dd MMM yyyy')}
+                    </p>
+                  </div>
+                  <a
+                    href={`/uploads/${doc.file_path}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn-outline text-xs py-1.5 px-3 flex items-center gap-1 flex-shrink-0"
+                  >
+                    <MdDownload size={14} /> View
+                  </a>
+                </div>
+              ))}
             </div>
           )}
         </div>
