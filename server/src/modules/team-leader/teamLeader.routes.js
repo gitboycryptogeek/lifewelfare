@@ -4,7 +4,8 @@ const { verifyToken } = require('../../middleware/auth');
 const { requireRole } = require('../../middleware/rbac');
 const ctrl = require('./teamLeader.controller');
 
-router.get('/dashboard', verifyToken, requireRole('team_leader'), ctrl.getTeamLeaderDashboard);
-router.get('/agents',    verifyToken, requireRole('team_leader'), ctrl.getTeamLeaderAgents);
+router.get('/dashboard',        verifyToken, requireRole('team_leader'), ctrl.getTeamLeaderDashboard);
+router.get('/agents',           verifyToken, requireRole('team_leader'), ctrl.getTeamLeaderAgents);
+router.get('/agents/:agentId',  verifyToken, requireRole('team_leader'), ctrl.getAgentDetail);
 
 module.exports = router;

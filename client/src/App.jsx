@@ -22,6 +22,7 @@ import AdminUsers from './pages/admin/Users';
 import AdminAudit from './pages/admin/Audit';
 import AdminTeamLeaders from './pages/admin/TeamLeaders';
 import TeamLeaderDashboard from './pages/team-leader/Dashboard';
+import TeamLeaderAgentDetail from './pages/team-leader/AgentDetail';
 
 export default function App() {
   return (
@@ -54,6 +55,9 @@ export default function App() {
         {/* Team Leader */}
         <Route path="/team-leader/dashboard" element={
           <ProtectedRoute roles={['team_leader']}><TeamLeaderDashboard /></ProtectedRoute>
+        } />
+        <Route path="/team-leader/agents/:agentId" element={
+          <ProtectedRoute roles={['team_leader']}><TeamLeaderAgentDetail /></ProtectedRoute>
         } />
 
         {/* Admin */}
