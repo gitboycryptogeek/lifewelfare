@@ -3,7 +3,7 @@ const { pool } = require('../../config/db');
 const { generateMembershipNumber } = require('../../utils/memberNumber');
 const { sendSMS } = require('../../utils/sms');
 const { sendEmail } = require('../../utils/email');
-const { generateCardPDF } = require('../cards/cards.service');
+const { generateCardPDF, generateCardPNG } = require('../cards/cards.service');
 
 async function registerMember(req, res, next) {
   try {
@@ -314,6 +314,7 @@ async function searchMembers(req, res, next) {
 }
 
 async function downloadCard(req, res, next) {
+  const fs = require('fs');
   try {
     const { id } = req.params;
 
@@ -325,25 +326,36 @@ async function downloadCard(req, res, next) {
       }
     }
 
-    const cardResult = await pool.query(
-      'SELECT * FROM membership_cards WHERE member_id = $1',
-      [id]
-    );
+    // Check existing card record
+    let cardResult = await pool.query('SELECT * FROM membership_cards WHERE member_id = $1', [id]);
+    let cardPath = cardResult.rows[0]?.card_url;
 
-    if (cardResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Membership card not yet generated' });
+    // Auto-generate if no DB record or file is missing
+    const needsGeneration = cardResult.rows.length === 0 || !cardPath || !fs.existsSync(cardPath);
+
+    if (needsGeneration) {
+      const memberResult = await pool.query('SELECT * FROM members WHERE id = $1', [id]);
+      if (memberResult.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Member not found' });
+      }
+      const member = memberResult.rows[0];
+      if (!member.membership_number) {
+        return res.status(404).json({ success: false, error: 'Membership card not yet generated — member pending approval' });
+      }
+
+      cardPath = await generateCardPNG(member);
+
+      // Re-fetch updated DB record for membership_number
+      cardResult = await pool.query('SELECT * FROM membership_cards WHERE member_id = $1', [id]);
     }
 
     const card = cardResult.rows[0];
-    const fs = require('fs');
-    const cardPath = card.card_url;
 
-    if (!cardPath || !fs.existsSync(cardPath)) {
-      return res.status(404).json({ success: false, error: 'Card file not found' });
-    }
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="membership-card-${card.membership_number}.pdf"`);
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Disposition', `attachment; filename="membership-card-${card.membership_number}.png"`);
+    res.setHeader('Cache-Control', 'no-cache');
+    // Allow cross-origin so blob URL construction works in the browser
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     fs.createReadStream(cardPath).pipe(res);
   } catch (err) {
     next(err);

@@ -87,7 +87,7 @@ export default function AdminMemberDetail() {
       const url = URL.createObjectURL(response.data);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `membership-card-${member?.membership_number}.pdf`;
+      a.download = `membership-card-${member?.membership_number}.png`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
