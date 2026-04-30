@@ -139,6 +139,7 @@ async function updateMember(req, res, next) {
     const {
       full_name, email, phone, physical_address, kra_pin,
       medical_declaration, medical_conditions, notes,
+      id_passport_no, dob, gender, cover_option,
     } = req.body;
 
     const result = await pool.query(
@@ -151,10 +152,15 @@ async function updateMember(req, res, next) {
         medical_declaration = COALESCE($6, medical_declaration),
         medical_conditions = COALESCE($7, medical_conditions),
         notes = COALESCE($8, notes),
+        id_passport_no = COALESCE($10, id_passport_no),
+        dob = COALESCE($11, dob),
+        gender = COALESCE($12, gender),
+        cover_option = COALESCE($13, cover_option),
         updated_at = NOW()
        WHERE id = $9
        RETURNING *`,
-      [full_name, email, phone, physical_address, kra_pin, medical_declaration, medical_conditions, notes, id]
+      [full_name, email, phone, physical_address, kra_pin, medical_declaration, medical_conditions, notes, id,
+       id_passport_no, dob || null, gender, cover_option ? parseInt(cover_option) : null]
     );
 
     if (result.rows.length === 0) {
@@ -354,30 +360,6 @@ async function addDependent(req, res, next) {
 
     const { id } = req.params;
     const { full_name, relationship, dob, id_or_birth_cert_no } = req.body;
-
-    // Validate max dependents per type
-    const childRels = ['child', 'son', 'daughter'];
-    const parentRels = ['parent', 'father', 'mother', 'parent-in-law', 'father-in-law', 'mother-in-law'];
-
-    if (childRels.includes(relationship.toLowerCase())) {
-      const childCount = await pool.query(
-        `SELECT COUNT(*) FROM dependents WHERE member_id = $1 AND relationship ILIKE ANY($2)`,
-        [id, childRels]
-      );
-      if (parseInt(childCount.rows[0].count) >= 4) {
-        return res.status(400).json({ success: false, error: 'Maximum 4 children allowed per cover' });
-      }
-    }
-
-    if (parentRels.includes(relationship.toLowerCase())) {
-      const parentCount = await pool.query(
-        `SELECT COUNT(*) FROM dependents WHERE member_id = $1 AND relationship ILIKE ANY($2)`,
-        [id, parentRels]
-      );
-      if (parseInt(parentCount.rows[0].count) >= 4) {
-        return res.status(400).json({ success: false, error: 'Maximum 4 parents allowed per cover' });
-      }
-    }
 
     const result = await pool.query(
       `INSERT INTO dependents (member_id, full_name, relationship, dob, id_or_birth_cert_no)

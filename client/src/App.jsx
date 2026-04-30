@@ -15,6 +15,7 @@ import AgentRegister from './pages/agent/Register';
 import AdminDashboard from './pages/admin/Dashboard';
 import AdminMembers from './pages/admin/Members';
 import AdminMemberDetail from './pages/admin/MemberDetail';
+import AdminEditMember from './pages/admin/EditMember';
 import AdminClaims from './pages/admin/Claims';
 import AdminCommunicate from './pages/admin/Communicate';
 import AdminReports from './pages/admin/Reports';
@@ -70,6 +71,9 @@ export default function App() {
         } />
         <Route path="/admin/members/:id" element={
           <ProtectedRoute roles={['admin', 'super_admin']}><AdminMemberDetail /></ProtectedRoute>
+        } />
+        <Route path="/admin/members/:id/edit" element={
+          <ProtectedRoute roles={['super_admin']}><AdminEditMember /></ProtectedRoute>
         } />
         <Route path="/admin/prospects" element={
           <ProtectedRoute roles={['admin', 'super_admin']}><AdminProspects /></ProtectedRoute>

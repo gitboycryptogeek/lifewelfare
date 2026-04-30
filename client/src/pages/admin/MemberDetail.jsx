@@ -7,11 +7,13 @@ import api from '../../services/api';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { MdCheckCircle, MdEdit, MdDownload, MdInsertDriveFile } from 'react-icons/md';
+import { useAuth } from '../../context/AuthContext';
 
 export default function AdminMemberDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { user } = useAuth();
   const [statusModal, setStatusModal] = useState(false);
   const [newStatus, setNewStatus] = useState('');
   const [statusNotes, setStatusNotes] = useState('');
@@ -117,6 +119,14 @@ export default function AdminMemberDetail() {
             <StatusBadge status={member.status} />
           </div>
           <div className="flex gap-2">
+            {user?.role === 'super_admin' && (
+              <button
+                onClick={() => navigate(`/admin/members/${id}/edit`)}
+                className="btn-outline flex items-center gap-2"
+              >
+                <MdEdit size={16} /> Edit Member
+              </button>
+            )}
             {member.status === 'pending' && (
               <button
                 onClick={() => approveMutation.mutate()}
