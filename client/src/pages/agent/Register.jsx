@@ -17,7 +17,7 @@ const schema = z.object({
   phone: z.string().min(10, 'Valid phone required'),
   email: z.string().email('Invalid email').optional().or(z.literal('')),
   physical_address: z.string().optional(),
-  cover_option: z.coerce.number().min(2).max(5),
+  cover_option: z.coerce.number().min(1).max(6),
   medical_declaration: z.boolean().optional(),
   notes: z.string().optional(),
   dependents: z.array(z.object({
@@ -47,7 +47,7 @@ export default function AgentRegister() {
     defaultValues: {
       dependents: [],
       beneficiaries: [],
-      cover_option: 2,
+      cover_option: 1,
     },
   });
 
@@ -108,10 +108,12 @@ export default function AgentRegister() {
   }
 
   const coverOptions = [
-    { value: 2, label: 'Option 2 — KES 3,000/yr — Extended family' },
+    { value: 1, label: 'Option 1 — KES 1,500/yr — Individual basic (cover KES 50,000)' },
+    { value: 2, label: 'Option 2 — KES 3,000/yr — Extended family (cover KES 100,000)' },
     { value: 3, label: 'Option 3 — KES 6,000/yr — Extended family (cover KES 200,000)' },
     { value: 4, label: 'Option 4 — KES 9,000/yr — Extended family (cover KES 300,000)' },
     { value: 5, label: 'Option 5 — KES 12,000/yr — Extended family (cover KES 400,000)' },
+    { value: 6, label: 'Option 6 — KES 15,000/yr — Full extended family (cover KES 500,000)' },
   ];
 
   const stepLabels = ['Member Details', 'Dependents', 'Beneficiaries', 'Documents'];

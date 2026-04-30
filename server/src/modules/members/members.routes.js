@@ -25,7 +25,7 @@ const registrationValidation = [
   body('id_passport_no').notEmpty().trim().withMessage('ID/Passport number is required'),
   body('dob').isDate().withMessage('Valid date of birth is required'),
   body('phone').notEmpty().withMessage('Phone number is required'),
-  body('cover_option').isInt({ min: 2, max: 5 }).withMessage('Cover option must be 2–5'),
+  body('cover_option').isInt({ min: 1, max: 6 }).withMessage('Cover option must be 1–6'),
   body('gender').isIn(['male', 'female']).withMessage('Gender must be male or female'),
 ];
 

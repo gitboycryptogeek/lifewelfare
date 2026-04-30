@@ -4,10 +4,12 @@ import {
 } from 'react-icons/md';
 
 const coverPlans = [
-  { option: 2, premium: 'KES 3,000', cover: null, description: 'Extended family' },
+  { option: 1, premium: 'KES 1,500', cover: 'KES 50,000', description: 'Individual basic cover' },
+  { option: 2, premium: 'KES 3,000', cover: 'KES 100,000', description: 'Extended family' },
   { option: 3, premium: 'KES 6,000', cover: 'KES 200,000', description: 'Extended family' },
   { option: 4, premium: 'KES 9,000', cover: 'KES 300,000', description: 'Extended family' },
   { option: 5, premium: 'KES 12,000', cover: 'KES 400,000', description: 'Extended family' },
+  { option: 6, premium: 'KES 15,000', cover: 'KES 500,000', description: 'Full extended family cover' },
 ];
 
 const steps = [
@@ -79,7 +81,7 @@ export default function Landing() {
               <MdCheckCircle className="text-brand-gold" size={18} /> One-time joining fee: <strong>KES 200</strong> (mandatory for all new members)
             </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {coverPlans.map((plan) => (
               <div
                 key={plan.option}
@@ -92,9 +94,7 @@ export default function Landing() {
                   {plan.premium}
                   <span className="text-sm font-normal text-gray-500">/year</span>
                 </div>
-                {plan.cover && (
-                  <div className="text-brand-green font-semibold text-lg mb-2">Cover: {plan.cover}</div>
-                )}
+                <div className="text-brand-green font-semibold text-lg mb-2">Cover: {plan.cover}</div>
                 <p className="text-gray-600 text-sm">{plan.description}</p>
                 <div className="mt-4 pt-4 border-t border-gray-100">
                   <span className="text-xs text-gray-400">Option {plan.option}</span>

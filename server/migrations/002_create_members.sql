@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS members (
   phone VARCHAR(20) NOT NULL,
   email VARCHAR(255),
   physical_address TEXT,
-  cover_option INTEGER CHECK (cover_option BETWEEN 2 AND 5),
+  cover_option INTEGER CHECK (cover_option BETWEEN 1 AND 6),
   status VARCHAR(20) DEFAULT 'pending'
     CHECK (status IN ('pending', 'active', 'suspended', 'deceased', 'claim_pending', 'claim_settled')),
   registration_date TIMESTAMPTZ DEFAULT NOW(),
