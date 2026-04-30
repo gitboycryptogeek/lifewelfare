@@ -26,7 +26,7 @@ async function getSummary(req, res, next) {
       `),
       pool.query(`SELECT COUNT(*) AS total FROM users WHERE role = 'agent' AND is_active = true`),
       pool.query(`
-        SELECT m.full_name, m.membership_number, m.status, m.registration_date, u.full_name AS agent_name
+        SELECT m.id, m.full_name, m.email, m.membership_number, m.status, m.registration_date, u.full_name AS agent_name
         FROM members m
         LEFT JOIN users u ON u.id = m.registered_by_agent
         ORDER BY m.created_at DESC

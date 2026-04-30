@@ -6,7 +6,7 @@ import StatusBadge from '../../components/StatusBadge';
 import api from '../../services/api';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
-import { MdCheckCircle, MdEdit, MdDownload, MdInsertDriveFile } from 'react-icons/md';
+import { MdCheckCircle, MdEdit, MdDownload, MdInsertDriveFile, MdEmail } from 'react-icons/md';
 import { useAuth } from '../../context/AuthContext';
 
 export default function AdminMemberDetail() {
@@ -95,6 +95,23 @@ export default function AdminMemberDetail() {
     }
   }
 
+  const [emailingCard, setEmailingCard] = useState(false);
+  async function handleEmailCard() {
+    if (!member?.email) {
+      toast.error('Member has no email address on file');
+      return;
+    }
+    setEmailingCard(true);
+    try {
+      const { data } = await api.post(`/members/${id}/card/email`);
+      toast.success(data.message || 'Card sent to member\'s email');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to send card');
+    } finally {
+      setEmailingCard(false);
+    }
+  }
+
   if (isLoading) {
     return (
       <Layout title="Member Details">
@@ -145,6 +162,16 @@ export default function AdminMemberDetail() {
             {member.status === 'active' && (
               <button onClick={handleDownloadCard} className="btn-secondary flex items-center gap-2">
                 <MdDownload size={16} /> Download Card
+              </button>
+            )}
+            {member.status === 'active' && (
+              <button
+                onClick={handleEmailCard}
+                disabled={emailingCard}
+                className="btn-outline flex items-center gap-2"
+              >
+                <MdEmail size={16} />
+                {emailingCard ? 'Sending…' : 'Email Card'}
               </button>
             )}
           </div>

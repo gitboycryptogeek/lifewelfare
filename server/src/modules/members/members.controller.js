@@ -3,7 +3,7 @@ const { pool } = require('../../config/db');
 const { generateMembershipNumber } = require('../../utils/memberNumber');
 const { sendSMS } = require('../../utils/sms');
 const { sendEmail } = require('../../utils/email');
-const { generateCardPDF, generateCardPNG } = require('../cards/cards.service');
+const { generateCardPDF, generateCardPNG, emailMemberCard } = require('../cards/cards.service');
 
 async function registerMember(req, res, next) {
   try {
@@ -539,10 +539,51 @@ async function getMemberClaims(req, res, next) {
   }
 }
 
+// Public: verify membership by number (no auth — used by QR code scans)
+async function verifyMember(req, res, next) {
+  try {
+    const { membershipNumber } = req.params;
+    const result = await pool.query(
+      `SELECT full_name, membership_number, status, cover_option, approval_date
+       FROM members WHERE membership_number = $1`,
+      [membershipNumber]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Membership number not found' });
+    }
+    return res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Admin: resend card PNG to member email
+async function emailCard(req, res, next) {
+  try {
+    const { id } = req.params;
+    const memberResult = await pool.query('SELECT * FROM members WHERE id = $1', [id]);
+    if (memberResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Member not found' });
+    }
+    const member = memberResult.rows[0];
+    if (!member.membership_number) {
+      return res.status(400).json({ success: false, error: 'Member has not been approved yet' });
+    }
+    if (!member.email) {
+      return res.status(400).json({ success: false, error: 'Member has no email address on file' });
+    }
+    await emailMemberCard(member);
+    return res.json({ success: true, message: `Card sent to ${member.email}` });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   registerMember, listMembers, getMember, updateMember,
   approveMember, updateStatus, searchMembers, downloadCard,
   addDependent, getDependents, removeDependent,
   addBeneficiary, getBeneficiaries, removeBeneficiary,
   getMemberClaims, uploadDocuments, getDocuments,
+  verifyMember, emailCard,
 };

@@ -41,6 +41,9 @@ router.post(
 // Search members
 router.get('/search', verifyToken, requireRole('admin', 'agent'), ctrl.searchMembers);
 
+// Public membership verification (QR code scans — no auth required)
+router.get('/verify/:membershipNumber', ctrl.verifyMember);
+
 // List all members (admin)
 router.get('/', verifyToken, requireRole('admin', 'super_admin'), ctrl.listMembers);
 
@@ -63,6 +66,9 @@ router.patch('/:id/status', verifyToken, requireRole('admin', 'super_admin'), ct
 
 // Download card
 router.get('/:id/card', verifyToken, ctrl.downloadCard);
+
+// Admin resend card to member email
+router.post('/:id/card/email', verifyToken, requireRole('admin', 'super_admin'), ctrl.emailCard);
 
 // Dependents
 router.post(

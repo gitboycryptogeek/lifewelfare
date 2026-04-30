@@ -50,20 +50,12 @@ function buildCardSVG({ full_name, membership_number, cover_option }, qrDataUrl)
     <clipPath id="card"><rect width="${W}" height="${H}" rx="14"/></clipPath>
   </defs>
 
-  <!-- Card shape -->
   <rect width="${W}" height="${H}" rx="14" fill="url(#bg)"/>
-
-  <!-- Subtle diagonal accent -->
-  <polygon points="0,0 180,0 0,80" fill="#F5A623" opacity="0.06"/>
-
-  <!-- Left gold bar -->
+  <polygon points="0,0 200,0 0,90" fill="#F5A623" opacity="0.06"/>
   <rect x="0" y="0" width="14" height="${H}" fill="#F5A623" rx="7"/>
-
-  <!-- Footer gold bar -->
   <rect x="0" y="${H - 58}" width="${W}" height="58" fill="url(#footer)"/>
   <rect x="0" y="${H - 58}" width="${W}" height="10" fill="url(#footer)"/>
 
-  <!-- Org name -->
   <text x="36" y="58"
         font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700"
         fill="#F5A623" letter-spacing="1">MY LIFE COMPANION</text>
@@ -71,10 +63,8 @@ function buildCardSVG({ full_name, membership_number, cover_option }, qrDataUrl)
         font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400"
         fill="#FFFFFF" letter-spacing="3">WELFARE</text>
 
-  <!-- Separator -->
   <line x1="36" y1="97" x2="500" y2="97" stroke="#F5A623" stroke-width="1" opacity="0.35"/>
 
-  <!-- Member Name label + value -->
   <text x="36" y="123"
         font-family="Arial, Helvetica, sans-serif" font-size="9.5" font-weight="400"
         fill="#9AAABF" letter-spacing="2.5">MEMBER NAME</text>
@@ -82,7 +72,6 @@ function buildCardSVG({ full_name, membership_number, cover_option }, qrDataUrl)
         font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700"
         fill="#FFFFFF">${name}</text>
 
-  <!-- Membership number label + value -->
   <text x="36" y="192"
         font-family="Arial, Helvetica, sans-serif" font-size="9.5" font-weight="400"
         fill="#9AAABF" letter-spacing="2.5">MEMBERSHIP NO.</text>
@@ -90,7 +79,6 @@ function buildCardSVG({ full_name, membership_number, cover_option }, qrDataUrl)
         font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700"
         fill="#F5A623" letter-spacing="1">${number}</text>
 
-  <!-- Cover option -->
   <text x="36" y="268"
         font-family="Arial, Helvetica, sans-serif" font-size="9.5" font-weight="400"
         fill="#9AAABF" letter-spacing="2.5">COVER OPTION</text>
@@ -98,7 +86,6 @@ function buildCardSVG({ full_name, membership_number, cover_option }, qrDataUrl)
         font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400"
         fill="#FFFFFF">${cover}</text>
 
-  <!-- Valid year -->
   <text x="220" y="268"
         font-family="Arial, Helvetica, sans-serif" font-size="9.5" font-weight="400"
         fill="#9AAABF" letter-spacing="2.5">VALID YEAR</text>
@@ -106,29 +93,24 @@ function buildCardSVG({ full_name, membership_number, cover_option }, qrDataUrl)
         font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400"
         fill="#FFFFFF">${year}</text>
 
-  <!-- QR code box background for contrast -->
   <rect x="508" y="22" width="188" height="188" rx="6" fill="#FFFFFF"/>
-  <!-- QR code image -->
   <image xlink:href="${qrDataUrl}" x="512" y="26" width="180" height="180"
          preserveAspectRatio="xMidYMid meet"/>
-  <!-- Scan label -->
   <text x="602" y="226"
         font-family="Arial, Helvetica, sans-serif" font-size="9" font-weight="400"
         fill="#9AAABF" text-anchor="middle" letter-spacing="1.5">SCAN TO VERIFY</text>
 
-  <!-- Footer text -->
   <text x="${W / 2}" y="${H - 30}"
         font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700"
         fill="#1A2B4A" text-anchor="middle">Underwritten by Old Mutual</text>
   <text x="${W / 2}" y="${H - 12}"
         font-family="Arial, Helvetica, sans-serif" font-size="9.5"
-        fill="#1A2B4A" text-anchor="middle">
-    +254-118-043-715 • info@mylife-companion.com • www.mylife-companion.com
-  </text>
+        fill="#1A2B4A" text-anchor="middle">+254-118-043-715 • info@mylife-companion.com • www.mylife-companion.com</text>
 </svg>`;
 }
 
-async function generateCardPNG(member) {
+// Generate PNG buffer + save file + update DB record. Returns { cardPath, pngBuffer }.
+async function _generateAndSaveCard(member) {
   const verifyUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/verify/${member.membership_number}`;
 
   const qrDataUrl = await QRCode.toDataURL(verifyUrl, {
@@ -140,10 +122,7 @@ async function generateCardPNG(member) {
 
   const cardPath = path.join(CARDS_DIR, `card-${member.membership_number}.png`);
   const svgContent = buildCardSVG(member, qrDataUrl);
-
-  const pngBuffer = await sharp(Buffer.from(svgContent))
-    .png({ compressionLevel: 6 })
-    .toBuffer();
+  const pngBuffer = await sharp(Buffer.from(svgContent)).png({ compressionLevel: 6 }).toBuffer();
 
   fs.writeFileSync(cardPath, pngBuffer);
 
@@ -155,6 +134,13 @@ async function generateCardPNG(member) {
     [member.id, member.membership_number, verifyUrl, cardPath]
   );
 
+  return { cardPath, pngBuffer };
+}
+
+// Full generation flow: card + email + SMS (used on member approval).
+async function generateCardPNG(member) {
+  const { cardPath, pngBuffer } = await _generateAndSaveCard(member);
+
   if (member.email) {
     await sendEmail({
       to: member.email,
@@ -164,13 +150,11 @@ async function generateCardPNG(member) {
              <p><strong>Membership Number: ${member.membership_number}</strong></p>
              <p>You can also download your card from your member portal at any time.</p>
              <p>Regards,<br/>My Life Companion Welfare</p>`,
-      attachments: [
-        {
-          filename: `membership-card-${member.membership_number}.png`,
-          content: pngBuffer,
-          contentType: 'image/png',
-        },
-      ],
+      attachments: [{
+        filename: `membership-card-${member.membership_number}.png`,
+        content: pngBuffer,
+        contentType: 'image/png',
+      }],
     }).catch(console.error);
 
     await pool.query('UPDATE membership_cards SET emailed_at = NOW() WHERE member_id = $1', [member.id]);
@@ -186,7 +170,30 @@ async function generateCardPNG(member) {
   return cardPath;
 }
 
-// Kept as alias so existing callers (approveMember) don't need changes
+// Email-only resend — used by admin "Send Card" button. No SMS.
+async function emailMemberCard(member) {
+  const { pngBuffer } = await _generateAndSaveCard(member);
+
+  await sendEmail({
+    to: member.email,
+    subject: 'Your My Life Companion Welfare Membership Card',
+    html: `<p>Dear ${member.full_name},</p>
+           <p>Please find attached your My Life Companion Welfare membership card.</p>
+           <p><strong>Membership Number: ${member.membership_number}</strong></p>
+           <p>Present this card or scan the QR code to verify your membership.</p>
+           <p>For queries, call +254-118-043-715 or email info@mylife-companion.com</p>
+           <p>Regards,<br/>My Life Companion Welfare</p>`,
+    attachments: [{
+      filename: `membership-card-${member.membership_number}.png`,
+      content: pngBuffer,
+      contentType: 'image/png',
+    }],
+  });
+
+  await pool.query('UPDATE membership_cards SET emailed_at = NOW() WHERE member_id = $1', [member.id]);
+}
+
+// Alias kept so existing callers don't break
 const generateCardPDF = generateCardPNG;
 
-module.exports = { generateCardPDF, generateCardPNG };
+module.exports = { generateCardPDF, generateCardPNG, emailMemberCard };

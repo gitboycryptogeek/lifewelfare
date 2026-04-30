@@ -4,6 +4,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 
 import Landing from './pages/Landing';
 import Login from './pages/Login';
+import Verify from './pages/Verify';
 
 import MemberDashboard from './pages/member/Dashboard';
 import MemberProfile from './pages/member/Profile';
@@ -33,7 +34,7 @@ export default function App() {
         {/* Public */}
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/verify/:membershipNumber" element={<Landing />} />
+        <Route path="/verify/:membershipNumber" element={<Verify />} />
 
         {/* Member */}
         <Route path="/member/dashboard" element={

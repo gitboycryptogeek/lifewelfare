@@ -6,13 +6,31 @@ import StatusBadge from '../../components/StatusBadge';
 import ChangePasswordModal from '../../components/ChangePasswordModal';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
-import { MdLock } from 'react-icons/md';
+import { MdLock, MdEmail } from 'react-icons/md';
+import toast from 'react-hot-toast';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 
 export default function AdminDashboard() {
   const [showChangePw, setShowChangePw] = useState(false);
+  const [sendingCardFor, setSendingCardFor] = useState(null);
+
+  async function handleEmailCard(memberId, memberEmail, memberName) {
+    if (!memberEmail) {
+      toast.error(`${memberName} has no email address on file`);
+      return;
+    }
+    setSendingCardFor(memberId);
+    try {
+      const { data } = await api.post(`/members/${memberId}/card/email`);
+      toast.success(data.message || `Card sent to ${memberEmail}`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to send card');
+    } finally {
+      setSendingCardFor(null);
+    }
+  }
   const { data: summary, isLoading } = useQuery({
     queryKey: ['admin-summary'],
     queryFn: async () => {
@@ -154,18 +172,32 @@ export default function AdminDashboard() {
                     <th className="text-left text-gray-500 font-medium pb-2 pr-4">Membership No.</th>
                     <th className="text-left text-gray-500 font-medium pb-2 pr-4">Agent</th>
                     <th className="text-left text-gray-500 font-medium pb-2 pr-4">Status</th>
-                    <th className="text-left text-gray-500 font-medium pb-2">Date</th>
+                    <th className="text-left text-gray-500 font-medium pb-2 pr-4">Date</th>
+                    <th className="text-left text-gray-500 font-medium pb-2">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {summary.recent_registrations.map((m) => (
-                    <tr key={m.full_name + m.registration_date} className="border-b border-gray-50 hover:bg-gray-50">
+                    <tr key={m.id || m.full_name + m.registration_date} className="border-b border-gray-50 hover:bg-gray-50">
                       <td className="py-2.5 pr-4 font-medium">{m.full_name}</td>
-                      <td className="py-2.5 pr-4">{m.membership_number || '—'}</td>
+                      <td className="py-2.5 pr-4 font-mono text-xs">{m.membership_number || '—'}</td>
                       <td className="py-2.5 pr-4 text-gray-500">{m.agent_name || '—'}</td>
                       <td className="py-2.5 pr-4"><StatusBadge status={m.status} /></td>
-                      <td className="py-2.5 text-gray-500 whitespace-nowrap">
+                      <td className="py-2.5 pr-4 text-gray-500 whitespace-nowrap">
                         {format(new Date(m.registration_date), 'dd MMM yyyy')}
+                      </td>
+                      <td className="py-2.5">
+                        {m.status === 'active' && (
+                          <button
+                            onClick={() => handleEmailCard(m.id, m.email, m.full_name)}
+                            disabled={sendingCardFor === m.id}
+                            title={m.email ? `Send card to ${m.email}` : 'No email on file'}
+                            className="flex items-center gap-1 text-xs text-brand-gold hover:text-brand-gold-dark disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                          >
+                            <MdEmail size={14} />
+                            {sendingCardFor === m.id ? 'Sending…' : 'Email Card'}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
