@@ -4,12 +4,12 @@ import {
 } from 'react-icons/md';
 
 const coverPlans = [
-  { option: 1, premium: 'KES 1,500', cover: 'KES 50,000', description: 'Individual basic cover' },
+  { option: 1, premium: 'KES 1,500', cover: 'KES 50,000', description: 'Extended family' },
   { option: 2, premium: 'KES 3,000', cover: 'KES 100,000', description: 'Extended family' },
   { option: 3, premium: 'KES 6,000', cover: 'KES 200,000', description: 'Extended family' },
   { option: 4, premium: 'KES 9,000', cover: 'KES 300,000', description: 'Extended family' },
   { option: 5, premium: 'KES 12,000', cover: 'KES 400,000', description: 'Extended family' },
-  { option: 6, premium: 'KES 15,000', cover: 'KES 500,000', description: 'Full extended family cover' },
+  { option: 6, premium: 'KES 15,000', cover: 'KES 500,000', description: 'Extended family' },
 ];
 
 const steps = [
@@ -72,14 +72,9 @@ export default function Landing() {
       {/* Cover Plans */}
       <section id="plans" className="py-20 px-4 sm:px-6 bg-gray-50">
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-4">
+          <div className="text-center mb-12">
             <h2 className="font-heading text-3xl font-bold text-brand-navy mb-3">Cover Plans</h2>
-            <p className="text-gray-600 max-w-xl mx-auto">All plans cover extended family and are paid annually. A one-time joining fee of <strong>KES 200</strong> applies to all new members.</p>
-          </div>
-          <div className="flex justify-center mb-8">
-            <div className="inline-flex items-center gap-2 bg-brand-gold/10 border border-brand-gold/40 text-brand-navy text-sm font-medium px-5 py-2.5 rounded-full">
-              <MdCheckCircle className="text-brand-gold" size={18} /> One-time joining fee: <strong>KES 200</strong> (mandatory for all new members)
-            </div>
+            <p className="text-gray-600 max-w-xl mx-auto">Choose the plan that fits your needs. All plans are paid annually and include a one-time joining fee of KES 200.</p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {coverPlans.map((plan) => (
