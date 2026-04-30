@@ -25,6 +25,11 @@ async function sendCommunication(req, res, next) {
         "SELECT phone, email, full_name FROM users WHERE role = 'agent' AND is_active = true"
       );
       recipients = result.rows;
+    } else if (recipient_type === 'prospects') {
+      const result = await pool.query(
+        "SELECT phone, email, full_name FROM prospects WHERE email IS NOT NULL"
+      );
+      recipients = result.rows;
     } else if (recipient_type === 'member' && recipient_ids?.length > 0) {
       const result = await pool.query(
         'SELECT phone, email, full_name FROM members WHERE id = ANY($1)',

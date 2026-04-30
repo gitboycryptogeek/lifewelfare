@@ -21,6 +21,7 @@ import AdminReports from './pages/admin/Reports';
 import AdminUsers from './pages/admin/Users';
 import AdminAudit from './pages/admin/Audit';
 import AdminTeamLeaders from './pages/admin/TeamLeaders';
+import AdminProspects from './pages/admin/Prospects';
 import TeamLeaderDashboard from './pages/team-leader/Dashboard';
 import TeamLeaderAgentDetail from './pages/team-leader/AgentDetail';
 
@@ -69,6 +70,9 @@ export default function App() {
         } />
         <Route path="/admin/members/:id" element={
           <ProtectedRoute roles={['admin', 'super_admin']}><AdminMemberDetail /></ProtectedRoute>
+        } />
+        <Route path="/admin/prospects" element={
+          <ProtectedRoute roles={['admin', 'super_admin']}><AdminProspects /></ProtectedRoute>
         } />
         <Route path="/admin/claims" element={
           <ProtectedRoute roles={['admin', 'super_admin']}><AdminClaims /></ProtectedRoute>

@@ -23,6 +23,15 @@ export default function TeamLeaderAgentDetail() {
   const { agentId } = useParams();
   const [page, setPage] = useState(1);
 
+  const { data: prospectsData } = useQuery({
+    queryKey: ['tl-agent-prospects', agentId],
+    queryFn: async () => {
+      const { data } = await api.get(`/prospects/agent/${agentId}`);
+      return data.data;
+    },
+    enabled: !!agentId,
+  });
+
   const { data, isLoading, isError } = useQuery({
     queryKey: ['tl-agent-detail', agentId, page],
     queryFn: async () => {
@@ -213,6 +222,48 @@ export default function TeamLeaderAgentDetail() {
                 </div>
               )}
             </>
+          )}
+        </div>
+        {/* Prospects section */}
+        <div className="card">
+          <h3 className="font-heading font-bold text-brand-navy mb-4">
+            Prospects {prospectsData?.length ? `(${prospectsData.length})` : ''}
+          </h3>
+          {!prospectsData?.length ? (
+            <p className="text-gray-500 text-sm text-center py-6">This agent has not captured any prospects yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100">
+                    {['Name', 'Phone', 'Email', 'Status', 'Date'].map((h) => (
+                      <th key={h} className="text-left text-gray-500 font-medium pb-2 pr-4 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {prospectsData.map((p) => (
+                    <tr key={p.id} className="border-b border-gray-50 hover:bg-gray-50">
+                      <td className="py-2.5 pr-4 font-medium">{p.full_name}</td>
+                      <td className="py-2.5 pr-4">{p.phone}</td>
+                      <td className="py-2.5 pr-4 text-gray-500">{p.email || '—'}</td>
+                      <td className="py-2.5 pr-4">
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                          p.status === 'approved'
+                            ? 'bg-green-50 text-green-700'
+                            : 'bg-yellow-50 text-yellow-700'
+                        }`}>
+                          {p.status === 'approved' ? 'Approved' : 'Prospect'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 text-gray-400 whitespace-nowrap">
+                        {format(new Date(p.created_at), 'dd MMM yyyy')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       </div>

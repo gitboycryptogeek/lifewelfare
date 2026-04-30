@@ -56,6 +56,7 @@ export default function AdminCommunicate() {
               <select value={recipientType} onChange={(e) => setRecipientType(e.target.value)} className="input">
                 <option value="all">All Active Members</option>
                 <option value="agent">All Agents</option>
+                <option value="prospects">Prospects (email only)</option>
               </select>
             </div>
           </div>

@@ -7,7 +7,7 @@ import ChangePasswordModal from '../../components/ChangePasswordModal';
 import api from '../../services/api';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
-import { MdPersonAdd, MdPeople, MdCheckCircle, MdHourglassEmpty, MdTrendingUp, MdLock } from 'react-icons/md';
+import { MdPersonAdd, MdPeople, MdCheckCircle, MdHourglassEmpty, MdTrendingUp, MdLock, MdPersonSearch } from 'react-icons/md';
 
 export default function AgentDashboard() {
   const { user } = useAuth();
@@ -17,6 +17,14 @@ export default function AgentDashboard() {
     queryKey: ['agent-leaderboard'],
     queryFn: async () => {
       const { data } = await api.get('/reports/agents');
+      return data.data;
+    },
+  });
+
+  const { data: prospectsData } = useQuery({
+    queryKey: ['agent-prospects'],
+    queryFn: async () => {
+      const { data } = await api.get('/prospects/my');
       return data.data;
     },
   });
@@ -43,6 +51,7 @@ export default function AgentDashboard() {
       icon: MdTrendingUp,
       color: 'text-purple-600',
     },
+    { label: 'Prospects', value: prospectsData?.length || 0, icon: MdPersonSearch, color: 'text-indigo-600' },
   ];
 
   return (
@@ -69,7 +78,7 @@ export default function AgentDashboard() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           {stats.map((stat) => (
             <div key={stat.label} className="card text-center">
               <stat.icon size={24} className={`${stat.color} mx-auto mb-2`} />
