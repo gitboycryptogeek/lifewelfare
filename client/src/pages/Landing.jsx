@@ -23,8 +23,8 @@ const steps = [
 const keyTerms = [
   { label: 'Waiting Period (General)', value: '2 months' },
   { label: 'Waiting Period (Parents)', value: '3 months' },
-  { label: 'Max Children Covered', value: '4 children' },
-  { label: 'Max Parents Covered', value: '4 parents' },
+  { label: 'Children Covered', value: 'No limit' },
+  { label: 'Dependents Covered', value: 'No limit' },
   { label: 'Max Claims Per Year', value: '6 claims/family' },
   { label: 'Maximum Entry Age (Children)', value: '25 years' },
 ];
@@ -181,8 +181,8 @@ export default function Landing() {
             {[
               { icon: MdPeople, label: 'Principal Member', sub: 'You' },
               { icon: MdFamilyRestroom, label: 'Spouse', sub: '1 spouse' },
-              { icon: MdLocalHospital, label: 'Children', sub: 'Up to 4' },
-              { icon: MdPeople, label: 'Parents', sub: 'Up to 4' },
+              { icon: MdLocalHospital, label: 'Children', sub: 'No limit' },
+              { icon: MdPeople, label: 'Parents', sub: 'No limit' },
             ].map(({ icon: Icon, label, sub }) => (
               <div key={label} className="bg-brand-navy-light rounded-xl p-4 sm:p-6">
                 <Icon size={32} className="text-brand-gold mx-auto mb-2 sm:mb-3" />
