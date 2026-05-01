@@ -16,6 +16,9 @@ export default {
         heading: ['Merriweather', 'Georgia', 'serif'],
         body: ['Source Sans 3', 'sans-serif'],
       },
+      screens: {
+        xs: '375px',
+      },
     },
   },
   plugins: [],

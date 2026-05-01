@@ -59,31 +59,31 @@ export default function AgentDashboard() {
       {showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />}
       <div className="space-y-6 max-w-5xl">
         {/* Quick action */}
-        <div className="bg-brand-navy text-white rounded-xl p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="bg-brand-navy text-white rounded-xl p-5 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h2 className="font-heading text-xl font-bold">Welcome, {user.full_name.split(' ')[0]}</h2>
             <p className="text-gray-400 text-sm mt-1">Register new members and track your recruitment performance.</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
             <button
               onClick={() => setShowChangePw(true)}
-              className="btn-outline flex items-center gap-2 whitespace-nowrap text-sm py-2 px-4"
+              className="btn-outline flex items-center gap-2 text-sm py-2 px-4 min-h-0"
             >
               <MdLock size={16} /> Change Password
             </button>
-            <Link to="/agent/register" className="btn-primary flex items-center gap-2 whitespace-nowrap">
+            <Link to="/agent/register" className="btn-primary flex items-center gap-2 min-h-0">
               <MdPersonAdd size={18} /> Register Member
             </Link>
           </div>
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
           {stats.map((stat) => (
-            <div key={stat.label} className="card text-center">
-              <stat.icon size={24} className={`${stat.color} mx-auto mb-2`} />
-              <div className="text-2xl font-bold text-brand-navy">{stat.value}</div>
-              <div className="text-xs text-gray-500 mt-1">{stat.label}</div>
+            <div key={stat.label} className="card text-center p-3 sm:p-6">
+              <stat.icon size={22} className={`${stat.color} mx-auto mb-2`} />
+              <div className="text-xl sm:text-2xl font-bold text-brand-navy">{stat.value}</div>
+              <div className="text-xs text-gray-500 mt-1 leading-tight">{stat.label}</div>
             </div>
           ))}
         </div>

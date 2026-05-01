@@ -31,9 +31,9 @@ export default function AdminMembers() {
     <Layout title="Members">
       <div className="space-y-4 max-w-7xl">
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
           <div className="relative flex-1">
-            <MdSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+            <MdSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={18} />
             <input
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}

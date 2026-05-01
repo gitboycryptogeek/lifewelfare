@@ -91,17 +91,17 @@ export default function AdminDashboard() {
         <div className="flex justify-end">
           <button
             onClick={() => setShowChangePw(true)}
-            className="btn-outline flex items-center gap-2 text-sm py-2 px-4"
+            className="btn-outline flex items-center gap-2 text-sm py-2 px-4 min-h-0"
           >
             <MdLock size={16} /> Change Password
           </button>
         </div>
         {/* Stats grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
           {statCards.map((s) => (
-            <div key={s.label} className={`card text-center ${s.color}`}>
-              <div className="text-2xl font-bold">{s.value}</div>
-              <div className="text-xs font-medium mt-1">{s.label}</div>
+            <div key={s.label} className={`card text-center p-3 sm:p-6 ${s.color}`}>
+              <div className="text-xl sm:text-2xl font-bold truncate">{s.value}</div>
+              <div className="text-xs font-medium mt-1 leading-tight">{s.label}</div>
             </div>
           ))}
         </div>

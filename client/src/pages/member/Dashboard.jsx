@@ -78,16 +78,18 @@ export default function MemberDashboard() {
         </div>
 
         {/* Status cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
           {[
-            { label: 'Status', value: <StatusBadge status={profile?.status || 'pending'} /> },
-            { label: 'Cover Option', value: profile?.cover_option ? `Option ${profile.cover_option}` : '—', icon: MdBadge },
-            { label: 'Member Since', value: profile?.registration_date ? format(new Date(profile.registration_date), 'MMM yyyy') : '—', icon: MdCalendarToday },
-            { label: 'Claims This Year', value: claimsData?.length || 0, icon: MdPeople },
+            { label: 'Status', value: <StatusBadge status={profile?.status || 'pending'} />, isComponent: true },
+            { label: 'Cover Option', value: profile?.cover_option ? `Option ${profile.cover_option}` : '—' },
+            { label: 'Member Since', value: profile?.registration_date ? format(new Date(profile.registration_date), 'MMM yyyy') : '—' },
+            { label: 'Claims This Year', value: claimsData?.length || 0 },
           ].map((stat) => (
-            <div key={stat.label} className="card text-center">
-              <p className="text-xs text-gray-500 mb-1">{stat.label}</p>
-              <div className="font-bold text-brand-navy text-lg">{stat.value}</div>
+            <div key={stat.label} className="card text-center p-3 sm:p-6">
+              <p className="text-xs text-gray-500 mb-1.5">{stat.label}</p>
+              <div className={`font-bold text-brand-navy ${stat.isComponent ? 'flex justify-center' : 'text-base sm:text-lg'}`}>
+                {stat.value}
+              </div>
             </div>
           ))}
         </div>
