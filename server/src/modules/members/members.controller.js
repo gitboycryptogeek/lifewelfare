@@ -204,6 +204,27 @@ async function approveMember(req, res, next) {
 
     const approvedMember = updated.rows[0];
 
+    // Auto-create commission if registered by an agent (not team leader)
+    if (approvedMember.registered_by_agent) {
+      try {
+        const agentRoleCheck = await pool.query(
+          'SELECT role FROM users WHERE id = $1',
+          [approvedMember.registered_by_agent]
+        );
+        if (agentRoleCheck.rows[0]?.role === 'agent') {
+          const commissionAmount = approvedMember.cover_option <= 2 ? 180.00 : 250.00;
+          await pool.query(
+            `INSERT INTO agent_commissions (agent_id, member_id, cover_option, commission_amount, status)
+             VALUES ($1, $2, $3, $4, 'pending')
+             ON CONFLICT (member_id) DO NOTHING`,
+            [approvedMember.registered_by_agent, approvedMember.id, approvedMember.cover_option, commissionAmount]
+          );
+        }
+      } catch (commissionErr) {
+        console.error('Commission creation error:', commissionErr.message);
+      }
+    }
+
     // Generate and send membership card
     try {
       await generateCardPDF(approvedMember);
@@ -268,9 +289,9 @@ async function searchMembers(req, res, next) {
   try {
     const { q } = req.query;
 
-    // Empty query — agents see all their own members, admins need a search term
+    // Empty query — agents/team leaders see all their own members, admins need a search term
     if (!q) {
-      if (req.user.role === 'agent') {
+      if (['agent', 'team_leader'].includes(req.user.role)) {
         const result = await pool.query(
           `SELECT m.*, u.full_name AS agent_name
            FROM members m
@@ -298,8 +319,8 @@ async function searchMembers(req, res, next) {
     `;
     const params = [`%${q}%`];
 
-    // Agents only see their own registered members
-    if (req.user.role === 'agent') {
+    // Agents and team leaders only see their own registered members
+    if (['agent', 'team_leader'].includes(req.user.role)) {
       baseQuery += ' AND m.registered_by_agent = $2';
       params.push(req.user.id);
     }

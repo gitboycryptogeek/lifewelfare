@@ -26,6 +26,10 @@ import AdminTeamLeaders from './pages/admin/TeamLeaders';
 import AdminProspects from './pages/admin/Prospects';
 import TeamLeaderDashboard from './pages/team-leader/Dashboard';
 import TeamLeaderAgentDetail from './pages/team-leader/AgentDetail';
+import TeamLeaderRegister from './pages/team-leader/Register';
+import TeamLeaderMembers from './pages/team-leader/Members';
+import AgentEarnings from './pages/agent/Earnings';
+import AdminCommissions from './pages/admin/Commissions';
 
 export default function App() {
   return (
@@ -54,6 +58,9 @@ export default function App() {
         <Route path="/agent/register" element={
           <ProtectedRoute roles={['agent']}><AgentRegister /></ProtectedRoute>
         } />
+        <Route path="/agent/earnings" element={
+          <ProtectedRoute roles={['agent']}><AgentEarnings /></ProtectedRoute>
+        } />
 
         {/* Team Leader */}
         <Route path="/team-leader/dashboard" element={
@@ -61,6 +68,12 @@ export default function App() {
         } />
         <Route path="/team-leader/agents/:agentId" element={
           <ProtectedRoute roles={['team_leader']}><TeamLeaderAgentDetail /></ProtectedRoute>
+        } />
+        <Route path="/team-leader/register" element={
+          <ProtectedRoute roles={['team_leader']}><TeamLeaderRegister /></ProtectedRoute>
+        } />
+        <Route path="/team-leader/members" element={
+          <ProtectedRoute roles={['team_leader']}><TeamLeaderMembers /></ProtectedRoute>
         } />
 
         {/* Admin */}
@@ -96,6 +109,9 @@ export default function App() {
         } />
         <Route path="/admin/team-leaders" element={
           <ProtectedRoute roles={['super_admin']}><AdminTeamLeaders /></ProtectedRoute>
+        } />
+        <Route path="/admin/commissions" element={
+          <ProtectedRoute roles={['admin', 'super_admin']}><AdminCommissions /></ProtectedRoute>
         } />
 
         <Route path="*" element={<Navigate to="/" replace />} />

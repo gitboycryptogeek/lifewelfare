@@ -33,13 +33,13 @@ const registrationValidation = [
 router.post(
   '/register',
   verifyToken,
-  requireRole('agent', 'admin', 'super_admin'),
+  requireRole('agent', 'team_leader', 'admin', 'super_admin'),
   registrationValidation,
   ctrl.registerMember
 );
 
 // Search members
-router.get('/search', verifyToken, requireRole('admin', 'agent'), ctrl.searchMembers);
+router.get('/search', verifyToken, requireRole('admin', 'agent', 'team_leader'), ctrl.searchMembers);
 
 // Public membership verification (QR code scans — no auth required)
 router.get('/verify/:membershipNumber', ctrl.verifyMember);
@@ -74,7 +74,7 @@ router.post('/:id/card/email', verifyToken, requireRole('admin', 'super_admin'),
 router.post(
   '/:id/dependents',
   verifyToken,
-  requireRole('agent', 'admin', 'super_admin'),
+  requireRole('agent', 'team_leader', 'admin', 'super_admin'),
   [
     body('full_name').notEmpty().withMessage('Full name is required'),
     body('relationship').notEmpty().withMessage('Relationship is required'),
@@ -88,7 +88,7 @@ router.delete('/:id/dependents/:depId', verifyToken, requireRole('admin', 'super
 router.post(
   '/:id/beneficiaries',
   verifyToken,
-  requireRole('agent', 'admin', 'super_admin'),
+  requireRole('agent', 'team_leader', 'admin', 'super_admin'),
   [
     body('full_name').notEmpty().withMessage('Full name is required'),
     body('relationship').notEmpty().withMessage('Relationship is required'),
@@ -105,7 +105,7 @@ router.get('/:id/claims', verifyToken, ctrl.getMemberClaims);
 router.post(
   '/:id/documents',
   verifyToken,
-  requireRole('agent', 'admin', 'super_admin'),
+  requireRole('agent', 'team_leader', 'admin', 'super_admin'),
   upload.array('documents', 10),
   ctrl.uploadDocuments
 );

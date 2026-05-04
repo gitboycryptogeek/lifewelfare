@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   MdDashboard, MdPeople, MdAssignment, MdChat, MdBarChart,
   MdSecurity, MdHistory, MdLogout, MdPersonAdd, MdPerson, MdGroups, MdPersonSearch,
+  MdAttachMoney, MdList,
 } from 'react-icons/md';
 import toast from 'react-hot-toast';
 
@@ -15,9 +16,12 @@ const navItems = {
   agent: [
     { to: '/agent/dashboard', icon: MdDashboard, label: 'Dashboard' },
     { to: '/agent/register', icon: MdPersonAdd, label: 'Register Member' },
+    { to: '/agent/earnings', icon: MdAttachMoney, label: 'My Earnings' },
   ],
   team_leader: [
     { to: '/team-leader/dashboard', icon: MdDashboard, label: 'Dashboard' },
+    { to: '/team-leader/register', icon: MdPersonAdd, label: 'Register Member' },
+    { to: '/team-leader/members', icon: MdList, label: 'My Members' },
   ],
   admin: [
     { to: '/admin/dashboard', icon: MdDashboard, label: 'Dashboard' },
@@ -26,6 +30,7 @@ const navItems = {
     { to: '/admin/claims', icon: MdAssignment, label: 'Claims' },
     { to: '/admin/communicate', icon: MdChat, label: 'Communications' },
     { to: '/admin/reports', icon: MdBarChart, label: 'Reports' },
+    { to: '/admin/commissions', icon: MdAttachMoney, label: 'Agent Commissions' },
   ],
   super_admin: [
     { to: '/admin/dashboard', icon: MdDashboard, label: 'Dashboard' },
@@ -34,6 +39,7 @@ const navItems = {
     { to: '/admin/claims', icon: MdAssignment, label: 'Claims' },
     { to: '/admin/communicate', icon: MdChat, label: 'Communications' },
     { to: '/admin/reports', icon: MdBarChart, label: 'Reports' },
+    { to: '/admin/commissions', icon: MdAttachMoney, label: 'Agent Commissions' },
     { to: '/admin/users', icon: MdSecurity, label: 'Users' },
     { to: '/admin/team-leaders', icon: MdGroups, label: 'Team Leaders' },
     { to: '/admin/audit', icon: MdHistory, label: 'Audit Trail' },
