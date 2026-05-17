@@ -242,4 +242,79 @@ async function unassignTeamLeader(req, res, next) {
   }
 }
 
-module.exports = { listUsers, createUser, deactivateUser, getAuditLogs, listTeamLeaders, assignTeamLeader, unassignTeamLeader };
+async function bulkCreateUsers(req, res, next) {
+  try {
+    const { users } = req.body;
+
+    if (!Array.isArray(users) || users.length === 0) {
+      return res.status(400).json({ success: false, error: 'users array is required and must not be empty' });
+    }
+    if (users.length > 100) {
+      return res.status(400).json({ success: false, error: 'Maximum 100 users per bulk request' });
+    }
+
+    const validRoles = ['agent', 'admin', 'super_admin', 'team_leader'];
+    const created = [];
+    const failed = [];
+    const byRole = {};
+
+    for (let i = 0; i < users.length; i++) {
+      const { full_name, phone, email, password, role } = users[i];
+      const rowLabel = `Row ${i + 1}`;
+
+      if (!full_name || !phone || !password || !role) {
+        failed.push({ index: i, full_name: full_name || '(blank)', reason: 'Missing required fields (name, phone, password, role)' });
+        continue;
+      }
+      if (password.length < 8) {
+        failed.push({ index: i, full_name, reason: 'Password must be at least 8 characters' });
+        continue;
+      }
+      if (!validRoles.includes(role)) {
+        failed.push({ index: i, full_name, reason: `Invalid role: ${role}` });
+        continue;
+      }
+
+      try {
+        const dupCheck = await pool.query('SELECT id FROM users WHERE phone = $1', [phone]);
+        if (dupCheck.rows.length > 0) {
+          failed.push({ index: i, full_name, reason: `Phone ${phone} already exists` });
+          continue;
+        }
+
+        const hash = await bcrypt.hash(password, 12);
+        const result = await pool.query(
+          `INSERT INTO users (full_name, phone, email, password_hash, role)
+           VALUES ($1,$2,$3,$4,$5)
+           RETURNING id, full_name, phone, email, role`,
+          [full_name.trim(), phone.trim(), email?.trim() || null, hash, role]
+        );
+
+        const user = result.rows[0];
+        created.push(user);
+        byRole[role] = (byRole[role] || 0) + 1;
+      } catch (err) {
+        failed.push({ index: i, full_name, reason: err.message });
+      }
+    }
+
+    return res.status(201).json({
+      success: true,
+      data: {
+        created,
+        failed,
+        summary: {
+          total: users.length,
+          created_count: created.length,
+          failed_count: failed.length,
+          by_role: byRole,
+        },
+      },
+      message: `${created.length} of ${users.length} users created successfully`,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { listUsers, createUser, bulkCreateUsers, deactivateUser, getAuditLogs, listTeamLeaders, assignTeamLeader, unassignTeamLeader };

@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   MdDashboard, MdPeople, MdAssignment, MdChat, MdBarChart,
   MdSecurity, MdHistory, MdLogout, MdPersonAdd, MdPerson, MdGroups, MdPersonSearch,
-  MdAttachMoney, MdList,
+  MdAttachMoney, MdList, MdReceiptLong,
 } from 'react-icons/md';
 import toast from 'react-hot-toast';
 
@@ -17,11 +17,13 @@ const navItems = {
     { to: '/agent/dashboard', icon: MdDashboard, label: 'Dashboard' },
     { to: '/agent/register', icon: MdPersonAdd, label: 'Register Member' },
     { to: '/agent/earnings', icon: MdAttachMoney, label: 'My Earnings' },
+    { to: '/agent/invoice', icon: MdReceiptLong, label: 'Invoices' },
   ],
   team_leader: [
     { to: '/team-leader/dashboard', icon: MdDashboard, label: 'Dashboard' },
     { to: '/team-leader/register', icon: MdPersonAdd, label: 'Register Member' },
     { to: '/team-leader/members', icon: MdList, label: 'My Members' },
+    { to: '/team-leader/invoice', icon: MdReceiptLong, label: 'Invoices' },
   ],
   admin: [
     { to: '/admin/dashboard', icon: MdDashboard, label: 'Dashboard' },
@@ -31,6 +33,7 @@ const navItems = {
     { to: '/admin/communicate', icon: MdChat, label: 'Communications' },
     { to: '/admin/reports', icon: MdBarChart, label: 'Reports' },
     { to: '/admin/commissions', icon: MdAttachMoney, label: 'Agent Commissions' },
+    { to: '/admin/invoices', icon: MdReceiptLong, label: 'Invoices' },
   ],
   super_admin: [
     { to: '/admin/dashboard', icon: MdDashboard, label: 'Dashboard' },
@@ -40,6 +43,7 @@ const navItems = {
     { to: '/admin/communicate', icon: MdChat, label: 'Communications' },
     { to: '/admin/reports', icon: MdBarChart, label: 'Reports' },
     { to: '/admin/commissions', icon: MdAttachMoney, label: 'Agent Commissions' },
+    { to: '/admin/invoices', icon: MdReceiptLong, label: 'Invoices' },
     { to: '/admin/users', icon: MdSecurity, label: 'Users' },
     { to: '/admin/team-leaders', icon: MdGroups, label: 'Team Leaders' },
     { to: '/admin/audit', icon: MdHistory, label: 'Audit Trail' },

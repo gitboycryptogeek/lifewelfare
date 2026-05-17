@@ -4,6 +4,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 
 import Landing from './pages/Landing';
 import Login from './pages/Login';
+import ForgotPassword from './pages/ForgotPassword';
 import Verify from './pages/Verify';
 
 import MemberDashboard from './pages/member/Dashboard';
@@ -29,7 +30,10 @@ import TeamLeaderAgentDetail from './pages/team-leader/AgentDetail';
 import TeamLeaderRegister from './pages/team-leader/Register';
 import TeamLeaderMembers from './pages/team-leader/Members';
 import AgentEarnings from './pages/agent/Earnings';
+import AgentInvoice from './pages/agent/Invoice';
 import AdminCommissions from './pages/admin/Commissions';
+import AdminInvoices from './pages/admin/Invoices';
+import TeamLeaderInvoice from './pages/team-leader/Invoice';
 
 export default function App() {
   return (
@@ -38,6 +42,7 @@ export default function App() {
         {/* Public */}
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/verify/:membershipNumber" element={<Verify />} />
 
         {/* Member */}
@@ -61,6 +66,9 @@ export default function App() {
         <Route path="/agent/earnings" element={
           <ProtectedRoute roles={['agent']}><AgentEarnings /></ProtectedRoute>
         } />
+        <Route path="/agent/invoice" element={
+          <ProtectedRoute roles={['agent']}><AgentInvoice /></ProtectedRoute>
+        } />
 
         {/* Team Leader */}
         <Route path="/team-leader/dashboard" element={
@@ -74,6 +82,9 @@ export default function App() {
         } />
         <Route path="/team-leader/members" element={
           <ProtectedRoute roles={['team_leader']}><TeamLeaderMembers /></ProtectedRoute>
+        } />
+        <Route path="/team-leader/invoice" element={
+          <ProtectedRoute roles={['team_leader']}><TeamLeaderInvoice /></ProtectedRoute>
         } />
 
         {/* Admin */}
@@ -112,6 +123,9 @@ export default function App() {
         } />
         <Route path="/admin/commissions" element={
           <ProtectedRoute roles={['admin', 'super_admin']}><AdminCommissions /></ProtectedRoute>
+        } />
+        <Route path="/admin/invoices" element={
+          <ProtectedRoute roles={['admin', 'super_admin']}><AdminInvoices /></ProtectedRoute>
         } />
 
         <Route path="*" element={<Navigate to="/" replace />} />

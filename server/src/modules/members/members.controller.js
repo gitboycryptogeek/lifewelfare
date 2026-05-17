@@ -1,5 +1,6 @@
 const { validationResult } = require('express-validator');
 const { pool } = require('../../config/db');
+const { verifyOtp } = require('../../utils/otp');
 const { generateMembershipNumber } = require('../../utils/memberNumber');
 const { sendSMS } = require('../../utils/sms');
 const { sendEmail } = require('../../utils/email');
@@ -140,7 +141,25 @@ async function updateMember(req, res, next) {
       full_name, email, phone, physical_address, kra_pin,
       medical_declaration, medical_conditions, notes,
       id_passport_no, dob, gender, cover_option,
+      otp_code,
     } = req.body;
+
+    // Super admin edits require OTP confirmation
+    if (req.user.role === 'super_admin') {
+      if (!otp_code) {
+        return res.status(400).json({ success: false, error: 'Verification code is required' });
+      }
+      try {
+        await verifyOtp({
+          userId: req.user.id,
+          purpose: 'edit_member',
+          code: otp_code,
+          contextRef: { member_id: id },
+        });
+      } catch (err) {
+        return res.status(401).json({ success: false, error: err.message });
+      }
+    }
 
     const result = await pool.query(
       `UPDATE members SET

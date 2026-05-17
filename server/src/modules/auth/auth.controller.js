@@ -2,6 +2,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { validationResult } = require('express-validator');
 const { pool } = require('../../config/db');
+const { verifyOtp } = require('../../utils/otp');
+const { normalisePhone } = require('../../utils/phone');
 
 function signAccessToken(payload) {
   return jwt.sign(payload, process.env.JWT_SECRET, {
@@ -23,14 +25,6 @@ async function login(req, res, next) {
     }
 
     const { phone: rawPhone, password } = req.body;
-
-    // Normalise phone: accept 07XX, 254XX, +254XX — store/query as +254XX
-    function normalisePhone(p) {
-      const digits = p.replace(/\D/g, '');
-      if (digits.startsWith('254')) return '+' + digits;
-      if (digits.startsWith('0')) return '+254' + digits.slice(1);
-      return p; // already has + or unknown format — pass through
-    }
     const phone = normalisePhone(rawPhone);
 
     // Try exact match first, then normalised
@@ -132,13 +126,16 @@ async function me(req, res, next) {
 
 async function changePassword(req, res, next) {
   try {
-    const { old_password, new_password } = req.body;
+    const { old_password, new_password, otp_code } = req.body;
 
-    if (!old_password || !new_password) {
-      return res.status(400).json({ success: false, error: 'Both old and new passwords are required' });
+    if (!new_password) {
+      return res.status(400).json({ success: false, error: 'New password is required' });
     }
     if (new_password.length < 6) {
       return res.status(400).json({ success: false, error: 'New password must be at least 6 characters' });
+    }
+    if (!otp_code) {
+      return res.status(400).json({ success: false, error: 'Verification code is required' });
     }
 
     const result = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
@@ -146,9 +143,23 @@ async function changePassword(req, res, next) {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
-    const valid = await bcrypt.compare(old_password, result.rows[0].password_hash);
-    if (!valid) {
-      return res.status(401).json({ success: false, error: 'Current password is incorrect' });
+    const { password_hash } = result.rows[0];
+
+    // Members may have no password yet — skip old-password check in that case
+    if (password_hash !== null) {
+      if (!old_password) {
+        return res.status(400).json({ success: false, error: 'Current password is required' });
+      }
+      const valid = await bcrypt.compare(old_password, password_hash);
+      if (!valid) {
+        return res.status(401).json({ success: false, error: 'Current password is incorrect' });
+      }
+    }
+
+    try {
+      await verifyOtp({ userId: req.user.id, purpose: 'change_password', code: otp_code });
+    } catch (err) {
+      return res.status(401).json({ success: false, error: err.message });
     }
 
     const hash = await bcrypt.hash(new_password, 12);

@@ -52,6 +52,11 @@ export function AuthProvider({ children }) {
     return data.data.user;
   }
 
+  function loginWithToken({ token, user }) {
+    localStorage.setItem('token', token);
+    setUser(user);
+  }
+
   async function logout() {
     try {
       await api.post('/auth/logout');
@@ -63,7 +68,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refetch: fetchMe }}>
+    <AuthContext.Provider value={{ user, loading, login, loginWithToken, logout, refetch: fetchMe }}>
       {children}
     </AuthContext.Provider>
   );

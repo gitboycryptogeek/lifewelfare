@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -8,6 +8,8 @@ import Layout from '../../components/Layout';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
 import { MdAdd, MdDelete } from 'react-icons/md';
+import OtpModal from '../../components/OtpModal';
+import { useAuth } from '../../context/AuthContext';
 
 const schema = z.object({
   full_name: z.string().min(2, 'Full name required'),
@@ -36,6 +38,12 @@ export default function AdminEditMember() {
   const { id } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { user } = useAuth();
+
+  const [showOtpModal, setShowOtpModal] = useState(false);
+  const [pendingFormValues, setPendingFormValues] = useState(null);
+  const [otpError, setOtpError] = useState(null);
+  const [otpLoading, setOtpLoading] = useState(false);
 
   const { data: member, isLoading } = useQuery({
     queryKey: ['member', id],
@@ -91,10 +99,42 @@ export default function AdminEditMember() {
     onSuccess: () => {
       toast.success('Member updated successfully');
       qc.invalidateQueries(['member', id]);
+      setShowOtpModal(false);
       navigate(`/admin/members/${id}`);
     },
-    onError: (err) => toast.error(err.response?.data?.error || 'Update failed'),
+    onError: (err) => {
+      const msg = err.response?.data?.error || 'Update failed';
+      // Surface OTP errors inside the modal
+      if (showOtpModal) setOtpError(msg);
+      else toast.error(msg);
+    },
   });
+
+  async function handleSave(formValues) {
+    if (user?.role === 'super_admin') {
+      setPendingFormValues(formValues);
+      setOtpError(null);
+      try {
+        await api.post('/auth/otp/request-action', {
+          purpose: 'edit_member',
+          context_ref: { member_id: id },
+        });
+        toast.success('Verification code sent to your email!');
+        setShowOtpModal(true);
+      } catch (err) {
+        toast.error(err.response?.data?.error || 'Failed to send verification code');
+      }
+    } else {
+      updateMutation.mutate(formValues);
+    }
+  }
+
+  async function handleOtpSubmit(code) {
+    setOtpLoading(true);
+    setOtpError(null);
+    updateMutation.mutate({ ...pendingFormValues, otp_code: code });
+    setOtpLoading(false);
+  }
 
   const addDepMutation = useMutation({
     mutationFn: (dep) => api.post(`/members/${id}/dependents`, dep),
@@ -177,7 +217,7 @@ export default function AdminEditMember() {
         </div>
 
         {/* Personal information form */}
-        <form onSubmit={handleSubmit((v) => updateMutation.mutate(v))}>
+        <form onSubmit={handleSubmit(handleSave)}>
           <div className="card space-y-4">
             <h3 className="font-heading font-bold text-brand-navy text-lg">Personal Information</h3>
 
@@ -389,6 +429,28 @@ export default function AdminEditMember() {
           </form>
         </div>
       </div>
+
+      {/* OTP confirmation modal — super_admin only */}
+      <OtpModal
+        isOpen={showOtpModal}
+        title="Confirm Member Edit"
+        description="Enter the 6-digit verification code sent to your email to save these changes."
+        onSubmit={handleOtpSubmit}
+        onClose={() => setShowOtpModal(false)}
+        onResend={async () => {
+          try {
+            await api.post('/auth/otp/request-action', {
+              purpose: 'edit_member',
+              context_ref: { member_id: id },
+            });
+            toast.success('New verification code sent!');
+          } catch {
+            toast.error('Failed to resend code');
+          }
+        }}
+        isLoading={otpLoading || updateMutation.isPending}
+        error={otpError}
+      />
     </Layout>
   );
 }

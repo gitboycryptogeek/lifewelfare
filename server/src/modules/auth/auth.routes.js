@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { body } = require('express-validator');
 const authController = require('./auth.controller');
+const otpController = require('./otp.controller');
 const { verifyToken } = require('../../middleware/auth');
 const rateLimit = require('express-rate-limit');
 
@@ -18,12 +19,14 @@ router.post(
     body('phone').notEmpty().withMessage('Phone is required'),
     body('password').notEmpty().withMessage('Password is required'),
   ],
-  authController.login
+  otpController.requestLoginOtp
 );
 
 router.post('/refresh', authController.refresh);
 router.post('/logout', verifyToken, authController.logout);
 router.get('/me', verifyToken, authController.me);
 router.post('/change-password', verifyToken, authController.changePassword);
+
+router.use('/otp', require('./auth.otp.routes'));
 
 module.exports = router;

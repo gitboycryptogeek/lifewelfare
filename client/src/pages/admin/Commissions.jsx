@@ -16,6 +16,9 @@ export default function AdminCommissions() {
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [disburseAgent, setDisburseAgent] = useState(null);
   const [disburseNotes, setDisburseNotes] = useState('');
+  const [disburseStep, setDisburseStep] = useState('confirm'); // 'confirm' | 'otp'
+  const [disburseOtpCode, setDisburseOtpCode] = useState('');
+  const [disburseOtpLoading, setDisburseOtpLoading] = useState(false);
 
   const { data: summaryData } = useQuery({
     queryKey: ['commissions-summary'],
@@ -43,8 +46,8 @@ export default function AdminCommissions() {
   });
 
   const disburseMutation = useMutation({
-    mutationFn: async ({ agent_id, notes }) => {
-      const { data } = await api.patch('/commissions/disburse', { agent_id, notes });
+    mutationFn: async ({ agent_id, notes, otp_code }) => {
+      const { data } = await api.patch('/commissions/disburse', { agent_id, notes, otp_code });
       return data;
     },
     onSuccess: (data) => {
@@ -53,11 +56,36 @@ export default function AdminCommissions() {
       queryClient.invalidateQueries({ queryKey: ['commissions-agents'] });
       setDisburseAgent(null);
       setDisburseNotes('');
+      setDisburseStep('confirm');
+      setDisburseOtpCode('');
     },
     onError: (err) => {
       toast.error(err.response?.data?.error || 'Disbursement failed');
     },
   });
+
+  async function handleDisburseRequestOtp() {
+    setDisburseOtpLoading(true);
+    try {
+      await api.post('/auth/otp/request-action', {
+        purpose: 'disburse',
+        context_ref: { agent_id: disburseAgent.agent_id },
+      });
+      toast.success('Verification code sent to your email!');
+      setDisburseStep('otp');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to send verification code');
+    } finally {
+      setDisburseOtpLoading(false);
+    }
+  }
+
+  function closeDisburseModal() {
+    setDisburseAgent(null);
+    setDisburseNotes('');
+    setDisburseStep('confirm');
+    setDisburseOtpCode('');
+  }
 
   const summary = summaryData || {};
   const agents = agentsData?.data || [];
@@ -135,7 +163,7 @@ export default function AdminCommissions() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => { setDisburseAgent(a); setDisburseNotes(''); }}
+                              onClick={() => { setDisburseAgent(a); setDisburseNotes(''); setDisburseStep('confirm'); setDisburseOtpCode(''); }}
                               disabled={Number(a.pending_amount) === 0}
                               className="text-xs px-3 py-1 rounded-lg bg-brand-gold text-white font-medium hover:bg-yellow-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                             >
@@ -254,49 +282,102 @@ export default function AdminCommissions() {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <h3 className="font-heading font-bold text-brand-navy">Disburse Commissions</h3>
-              <button onClick={() => setDisburseAgent(null)} className="text-gray-400 hover:text-gray-600">
+              <button onClick={closeDisburseModal} className="text-gray-400 hover:text-gray-600">
                 <MdClose size={22} />
               </button>
             </div>
 
-            <div className="px-6 py-5 space-y-4">
-              <p className="text-sm text-gray-700">
-                Mark all pending commissions as disbursed for{' '}
-                <span className="font-semibold">{disburseAgent.agent_name}</span>?
-              </p>
-              <div className="bg-yellow-50 rounded-lg px-4 py-3 text-sm">
-                <span className="text-gray-500">Pending amount: </span>
-                <span className="font-bold text-yellow-700">{fmt(disburseAgent.pending_amount)}</span>
-              </div>
-              <div>
-                <label className="label">Notes (optional)</label>
-                <textarea
-                  value={disburseNotes}
-                  onChange={(e) => setDisburseNotes(e.target.value)}
-                  className="input"
-                  rows={3}
-                  placeholder="e.g. End of month payout — May 2026"
-                />
-              </div>
-            </div>
+            {/* ── Step 1: Confirm details ─────────────────────── */}
+            {disburseStep === 'confirm' && (
+              <>
+                <div className="px-6 py-5 space-y-4">
+                  <p className="text-sm text-gray-700">
+                    Mark all pending commissions as disbursed for{' '}
+                    <span className="font-semibold">{disburseAgent.agent_name}</span>?
+                  </p>
+                  <div className="bg-yellow-50 rounded-lg px-4 py-3 text-sm">
+                    <span className="text-gray-500">Pending amount: </span>
+                    <span className="font-bold text-yellow-700">{fmt(disburseAgent.pending_amount)}</span>
+                  </div>
+                  <div>
+                    <label className="label">Notes (optional)</label>
+                    <textarea
+                      value={disburseNotes}
+                      onChange={(e) => setDisburseNotes(e.target.value)}
+                      className="input"
+                      rows={3}
+                      placeholder="e.g. End of month payout — May 2026"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-3 px-6 pb-5">
+                  <button type="button" onClick={closeDisburseModal} className="btn-outline">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDisburseRequestOtp}
+                    disabled={disburseOtpLoading}
+                    className="btn-primary"
+                  >
+                    {disburseOtpLoading ? 'Sending code…' : 'Continue'}
+                  </button>
+                </div>
+              </>
+            )}
 
-            <div className="flex justify-end gap-3 px-6 pb-5">
-              <button
-                type="button"
-                onClick={() => setDisburseAgent(null)}
-                className="btn-outline"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => disburseMutation.mutate({ agent_id: disburseAgent.agent_id, notes: disburseNotes })}
-                disabled={disburseMutation.isPending}
-                className="btn-primary"
-              >
-                {disburseMutation.isPending ? 'Processing…' : 'Confirm Disburse'}
-              </button>
-            </div>
+            {/* ── Step 2: Enter OTP to confirm ───────────────── */}
+            {disburseStep === 'otp' && (
+              <>
+                <div className="px-6 py-5 space-y-4">
+                  <p className="text-sm text-gray-600">
+                    A verification code has been sent to your email. Enter it below to authorise this
+                    disbursement of{' '}
+                    <span className="font-semibold text-yellow-700">{fmt(disburseAgent.pending_amount)}</span>{' '}
+                    for <span className="font-semibold">{disburseAgent.agent_name}</span>.
+                  </p>
+                  <div>
+                    <label className="label">Verification Code</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={disburseOtpCode}
+                      onChange={(e) => setDisburseOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="6-digit code"
+                      className="input text-center tracking-widest font-bold text-lg"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleDisburseRequestOtp}
+                    disabled={disburseOtpLoading}
+                    className="text-sm text-brand-gold hover:underline"
+                  >
+                    {disburseOtpLoading ? 'Sending…' : 'Resend code'}
+                  </button>
+                </div>
+                <div className="flex justify-end gap-3 px-6 pb-5">
+                  <button type="button" onClick={() => setDisburseStep('confirm')} className="btn-outline">
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      disburseMutation.mutate({
+                        agent_id: disburseAgent.agent_id,
+                        notes: disburseNotes,
+                        otp_code: disburseOtpCode,
+                      })
+                    }
+                    disabled={disburseMutation.isPending || disburseOtpCode.length < 6}
+                    className="btn-primary"
+                  >
+                    {disburseMutation.isPending ? 'Processing…' : 'Confirm Disburse'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

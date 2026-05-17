@@ -4,6 +4,7 @@ const required = [
   'DATABASE_URL',
   'JWT_SECRET',
   'JWT_REFRESH_SECRET',
+  'JWT_OTP_SECRET',
 ];
 
 function validateEnv() {

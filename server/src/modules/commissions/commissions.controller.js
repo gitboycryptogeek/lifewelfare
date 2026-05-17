@@ -1,4 +1,5 @@
 const { pool } = require('../../config/db');
+const { verifyOtp } = require('../../utils/otp');
 
 async function getMyCommissions(req, res, next) {
   try {
@@ -152,10 +153,25 @@ async function getAgentCommissions(req, res, next) {
 
 async function disburseCommissions(req, res, next) {
   try {
-    const { agent_id, notes, from_date, to_date } = req.body;
+    const { agent_id, notes, from_date, to_date, otp_code } = req.body;
 
     if (!agent_id) {
       return res.status(400).json({ success: false, error: 'agent_id is required' });
+    }
+
+    if (!otp_code) {
+      return res.status(400).json({ success: false, error: 'Verification code is required' });
+    }
+
+    try {
+      await verifyOtp({
+        userId: req.user.id,
+        purpose: 'disburse',
+        code: otp_code,
+        contextRef: { agent_id },
+      });
+    } catch (err) {
+      return res.status(401).json({ success: false, error: err.message });
     }
 
     const agentCheck = await pool.query(

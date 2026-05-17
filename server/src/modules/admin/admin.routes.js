@@ -18,6 +18,7 @@ router.post(
   ],
   ctrl.createUser
 );
+router.post('/users/bulk', verifyToken, requireRole('super_admin'), ctrl.bulkCreateUsers);
 router.patch('/users/:id/deactivate', verifyToken, requireRole('super_admin'), ctrl.deactivateUser);
 router.get('/audit-logs', verifyToken, requireRole('super_admin'), ctrl.getAuditLogs);
 
