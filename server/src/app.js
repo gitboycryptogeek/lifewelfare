@@ -25,6 +25,9 @@ const invoiceRoutes = require('./modules/invoices/invoices.routes');
 
 const app = express();
 
+// Trust Heroku / reverse-proxy headers so rate-limiters see real client IPs
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet({
   contentSecurityPolicy: process.env.NODE_ENV === 'production' ? {
