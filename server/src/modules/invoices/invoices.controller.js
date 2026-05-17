@@ -370,4 +370,68 @@ async function updateStatus(req, res, next) {
   }
 }
 
-module.exports = { createInvoice, listInvoices, getInvoice, generatePdf, updateStatus };
+async function bulkCreateInvoices(req, res, next) {
+  try {
+    const { invoices } = req.body;
+
+    if (!Array.isArray(invoices) || invoices.length === 0) {
+      return res.status(400).json({ success: false, error: 'invoices array is required and must not be empty' });
+    }
+    if (invoices.length > 200) {
+      return res.status(400).json({ success: false, error: 'Maximum 200 invoices per bulk request' });
+    }
+
+    const created = [];
+    const failed = [];
+
+    const dbClient = await pool.connect();
+    try {
+      for (let i = 0; i < invoices.length; i++) {
+        const { client_name, cover_option, membership_fee, notes, member_id } = invoices[i];
+
+        if (!client_name || !cover_option) {
+          failed.push({ index: i, client_name: client_name || '(blank)', reason: 'client_name and cover_option are required' });
+          continue;
+        }
+
+        const optNum = parseInt(cover_option);
+        const plan = COVER_PLANS.find((p) => p.option === optNum);
+        if (!plan) {
+          failed.push({ index: i, client_name, reason: `Invalid cover_option ${cover_option} (must be 1–6)` });
+          continue;
+        }
+
+        try {
+          const planAmt = plan.premium;
+          const memberFee = membership_fee !== undefined ? parseFloat(membership_fee) : 200;
+          const total = planAmt + memberFee;
+          const invoiceNumber = await generateInvoiceNumber(dbClient);
+
+          const result = await dbClient.query(
+            `INSERT INTO invoices
+              (invoice_number, created_by, member_id, client_name, cover_option, plan_amount, membership_fee, total_amount, notes)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+             RETURNING *`,
+            [invoiceNumber, req.user.id, member_id || null, client_name.trim(), optNum, planAmt, memberFee, total, notes || null]
+          );
+
+          created.push(result.rows[0]);
+        } catch (err) {
+          failed.push({ index: i, client_name, reason: err.message });
+        }
+      }
+    } finally {
+      dbClient.release();
+    }
+
+    return res.status(201).json({
+      success: true,
+      data: { created, failed, summary: { total: invoices.length, created_count: created.length, failed_count: failed.length } },
+      message: `${created.length} of ${invoices.length} invoices created`,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { createInvoice, bulkCreateInvoices, listInvoices, getInvoice, generatePdf, updateStatus };
