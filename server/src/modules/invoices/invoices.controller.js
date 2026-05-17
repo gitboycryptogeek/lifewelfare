@@ -33,7 +33,7 @@ async function generateInvoiceNumber(client) {
 
 async function createInvoice(req, res, next) {
   try {
-    const { client_name, cover_option, plan_amount, membership_fee, notes, member_id } = req.body;
+    const { client_name, cover_option, plan_amount, membership_fee, notes, member_id, due_date } = req.body;
 
     if (!client_name || !cover_option) {
       return res.status(400).json({ success: false, error: 'client_name and cover_option are required' });
@@ -55,8 +55,8 @@ async function createInvoice(req, res, next) {
 
       const result = await dbClient.query(
         `INSERT INTO invoices
-          (invoice_number, created_by, member_id, client_name, cover_option, plan_amount, membership_fee, total_amount, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          (invoice_number, created_by, member_id, client_name, cover_option, plan_amount, membership_fee, total_amount, notes, due_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
         [
           invoiceNumber,
@@ -68,6 +68,7 @@ async function createInvoice(req, res, next) {
           memberFee,
           total,
           notes || null,
+          due_date || null,
         ]
       );
 
@@ -202,38 +203,53 @@ async function generatePdf(req, res, next) {
     const M = 40;
     const CW = PW - M * 2;
 
-    // ── Shared header band ───────────────────────────────────────────────────
+    // ── Header band ──────────────────────────────────────────────────────────
     doc.rect(0, 0, PW, 120).fill(NAVY);
     doc.fontSize(22).font('Helvetica-Bold').fillColor(GOLD)
       .text('My Life Companion Welfare', M, 28, { width: CW - 140 });
     doc.fontSize(8.5).font('Helvetica').fillColor('#CCCCCC')
-      .text('Development House, Floor 13, Suite 18', M, 56)
+      .text('Development House, Floor 13, Suite 18, Nairobi', M, 56)
       .text('+254-118-043-715  |  info@mylife-companion.com', M, 68)
       .text('Underwritten by Old Mutual', M, 80);
     doc.rect(PW - M - 130, 22, 130, 80).fill(GOLD);
     doc.fontSize(20).font('Helvetica-Bold').fillColor(NAVY)
       .text('INVOICE', PW - M - 130, 32, { width: 130, align: 'center' });
 
-    // ── Shared meta strip ────────────────────────────────────────────────────
+    // ── Meta strip — 4 columns: Invoice# | Date Issued | Pay By | Status ────
     let y = 140;
     doc.rect(M, y, CW, 56).fill(LIGHT_GRAY);
-    doc.fontSize(8).font('Helvetica-Bold').fillColor('#666666')
-      .text('INVOICE NUMBER', M + 12, y + 8)
-      .text('DATE ISSUED', M + CW / 2 - 20, y + 8)
-      .text('STATUS', M + CW - 100, y + 8);
-    doc.fontSize(11).font('Helvetica-Bold').fillColor(NAVY)
-      .text(inv.invoice_number, M + 12, y + 22);
-    const issueDate = new Date(inv.created_at).toLocaleDateString('en-KE', {
-      day: '2-digit', month: 'long', year: 'numeric',
-    });
-    doc.fontSize(11).font('Helvetica').fillColor('#222222')
-      .text(issueDate, M + CW / 2 - 20, y + 22);
-    const statusColor = inv.status === 'paid' ? GREEN : '#E67E22';
-    doc.fontSize(10).font('Helvetica-Bold').fillColor(statusColor)
-      .text(inv.status.toUpperCase(), M + CW - 100, y + 22);
 
-    // ── Shared billed-to / issued-by columns ─────────────────────────────────
-    y = 220;
+    const c1 = M + 12;
+    const c2 = M + Math.floor(CW * 0.28);
+    const c3 = M + Math.floor(CW * 0.54);
+    const c4 = M + Math.floor(CW * 0.78);
+
+    doc.fontSize(7.5).font('Helvetica-Bold').fillColor('#777777')
+      .text('INVOICE NUMBER', c1, y + 8)
+      .text('DATE ISSUED', c2, y + 8)
+      .text('PAY BY DATE', c3, y + 8)
+      .text('STATUS', c4, y + 8);
+
+    doc.fontSize(10.5).font('Helvetica-Bold').fillColor(NAVY)
+      .text(inv.invoice_number, c1, y + 23);
+
+    const issueDate = new Date(inv.created_at).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' });
+    doc.fontSize(10).font('Helvetica').fillColor('#222222')
+      .text(issueDate, c2, y + 23);
+
+    const dueDateStr = inv.due_date
+      ? new Date(inv.due_date).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '—';
+    doc.fontSize(10).font('Helvetica').fillColor(inv.due_date ? '#D32F2F' : '#AAAAAA')
+      .text(dueDateStr, c3, y + 23);
+
+    const statusLabel = inv.status === 'paid' ? 'PAID' : 'PENDING PAYMENT';
+    const statusColor = inv.status === 'paid' ? GREEN : '#E67E22';
+    doc.fontSize(9).font('Helvetica-Bold').fillColor(statusColor)
+      .text(statusLabel, c4, y + 23);
+
+    // ── Billed To / Issued By ────────────────────────────────────────────────
+    y = 222;
     const colW = CW / 2 - 10;
     const rightX = M + colW + 20;
 
@@ -250,13 +266,14 @@ async function generatePdf(req, res, next) {
 
     doc.fontSize(8).font('Helvetica-Bold').fillColor(GOLD).text('ISSUED BY', rightX, y);
     doc.moveTo(rightX, y + 13).lineTo(rightX + colW, y + 13).stroke(GOLD);
-    const issuerRole = (inv.created_by_role || '').replace('_', ' ');
-    doc.fontSize(11).font('Helvetica-Bold').fillColor(NAVY)
-      .text(inv.created_by_name, rightX, y + 18, { width: colW });
-    doc.fontSize(9).font('Helvetica').fillColor('#555555')
-      .text(issuerRole.charAt(0).toUpperCase() + issuerRole.slice(1), rightX, y + 36, { width: colW });
+    doc.fontSize(12).font('Helvetica-Bold').fillColor(NAVY)
+      .text('My Life Companion Welfare', rightX, y + 18, { width: colW });
+    doc.fontSize(8.5).font('Helvetica').fillColor('#555555')
+      .text('Development House, Floor 13, Suite 18', rightX, y + 36, { width: colW })
+      .text('+254-118-043-715  |  info@mylife-companion.com', rightX, y + 48, { width: colW })
+      .text('Underwritten by Old Mutual', rightX, y + 60, { width: colW });
 
-    y = 320;
+    y = 338;
 
     if (groupMembers) {
       // ── GROUP invoice: per-member line items ─────────────────────────────
@@ -423,15 +440,17 @@ async function createGroupInvoice(req, res, next) {
       }
     }
 
+    const { due_date } = req.body;
+
     const dbClient = await pool.connect();
     try {
       const invoiceNumber = await generateInvoiceNumber(dbClient);
       const result = await dbClient.query(
         `INSERT INTO invoices
-          (invoice_number, created_by, client_name, plan_amount, membership_fee, total_amount, notes, group_members)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          (invoice_number, created_by, client_name, plan_amount, membership_fee, total_amount, notes, group_members, due_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *`,
-        [invoiceNumber, req.user.id, invoiceName, totalPremiums, totalFees, grandTotal, notes || null, JSON.stringify(resolvedMembers)]
+        [invoiceNumber, req.user.id, invoiceName, totalPremiums, totalFees, grandTotal, notes || null, JSON.stringify(resolvedMembers), due_date || null]
       );
       return res.status(201).json({ success: true, data: result.rows[0] });
     } finally {

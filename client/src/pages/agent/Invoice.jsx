@@ -48,7 +48,7 @@ export default function AgentInvoice() {
   const [pdfLoading, setPdfLoading] = useState(null);
 
   // Single mode
-  const [form, setForm] = useState({ client_name: '', cover_option: '' });
+  const [form, setForm] = useState({ client_name: '', cover_option: '', due_date: '' });
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -56,6 +56,7 @@ export default function AgentInvoice() {
   // Batch mode
   const [rows, setRows] = useState([emptyRow()]);
   const [groupName, setGroupName] = useState('');
+  const [batchDueDate, setBatchDueDate] = useState('');
   const [groupResult, setGroupResult] = useState(null);
 
   const selectedPlan = COVER_PLANS.find((p) => p.option === parseInt(form.cover_option));
@@ -77,7 +78,7 @@ export default function AgentInvoice() {
       try { await downloadPdf(invoice.id, invoice.invoice_number); }
       catch { toast.error('Invoice saved but PDF download failed.'); }
       finally { setPdfLoading(null); }
-      setForm({ client_name: '', cover_option: '' });
+      setForm({ client_name: '', cover_option: '', due_date: '' });
       setSearch(''); setSearchResults([]);
     },
     onError: (err) => toast.error(err.response?.data?.error || 'Failed to create invoice'),
@@ -113,7 +114,7 @@ export default function AgentInvoice() {
     e.preventDefault();
     if (!form.client_name.trim()) return toast.error('Client name is required');
     if (!form.cover_option) return toast.error('Please select a cover option');
-    createMutation.mutate({ client_name: form.client_name, cover_option: parseInt(form.cover_option), plan_amount: planAmount, membership_fee: 200 });
+    createMutation.mutate({ client_name: form.client_name, cover_option: parseInt(form.cover_option), plan_amount: planAmount, membership_fee: 200, due_date: form.due_date || undefined });
   }
 
   // Batch helpers
@@ -125,7 +126,7 @@ export default function AgentInvoice() {
     const members = rows.filter((r) => r.client_name.trim() && r.cover_option)
       .map(({ client_name, cover_option }) => ({ client_name, cover_option: parseInt(cover_option) }));
     if (!members.length) return toast.error('Fill in at least one row');
-    groupMutation.mutate({ group_name: groupName.trim() || undefined, members });
+    groupMutation.mutate({ group_name: groupName.trim() || undefined, members, due_date: batchDueDate || undefined });
   }
 
   const batchTally = rows.reduce((acc, r) => {
@@ -195,12 +196,18 @@ export default function AgentInvoice() {
                     {COVER_PLANS.map((p) => <option key={p.option} value={p.option}>{p.name} · Cover {p.cover}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Joining Fee</label>
-                  <input type="text" value="KES 200 (standard)" readOnly className="w-full border border-gray-100 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-400 cursor-not-allowed" />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Joining Fee</label>
+                    <input type="text" value="KES 200 (standard)" readOnly className="w-full border border-gray-100 bg-gray-50 rounded-lg px-3 py-2.5 text-sm text-gray-400 cursor-not-allowed" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Pay By Date</label>
+                    <input type="date" value={form.due_date} onChange={(e) => setForm((f) => ({ ...f, due_date: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                  </div>
                 </div>
                 {selectedPlan && <div className="bg-brand-navy/5 rounded-lg p-3 flex justify-between items-center"><span className="text-sm text-gray-600 font-medium">Total Due</span><span className="text-brand-navy font-bold text-lg">{fmtKES(total)}</span></div>}
-                <button type="submit" disabled={createMutation.isPending || !!pdfLoading} className="w-full bg-brand-navy text-white font-semibold py-2.5 rounded-lg hover:bg-brand-navy-light transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
+                <button type="submit" disabled={createMutation.isPending || !!pdfLoading} className="w-full bg-brand-navy text-white font-semibold py-3 rounded-lg hover:bg-brand-navy-light transition-colors disabled:opacity-60 flex items-center justify-center gap-2 text-sm">
                   <MdDownload size={18} />{createMutation.isPending || pdfLoading ? 'Generating...' : 'Generate & Download Invoice'}
                 </button>
               </form>
@@ -275,19 +282,23 @@ export default function AgentInvoice() {
                   </button>
                 </div>
                 <div className="flex justify-end">
-                  <button onClick={() => { setGroupResult(null); setRows([emptyRow()]); setGroupName(''); }} className="btn-outline">New Group Invoice</button>
+                  <button onClick={() => { setGroupResult(null); setRows([emptyRow()]); setGroupName(''); setBatchDueDate(''); }} className="btn-outline">New Group Invoice</button>
                 </div>
               </div>
             ) : (
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center gap-3">
-                  <div className="flex-1">
-                    <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group / Invoice Name (optional — e.g. Smith Family)" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                <div className="px-4 py-3 border-b border-gray-100 flex flex-col gap-3">
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group / Invoice Name (optional — e.g. Smith Family)" className="flex-1 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                    <div className="flex items-center gap-2 shrink-0">
+                      <label className="text-xs text-gray-500 font-medium whitespace-nowrap">Pay By:</label>
+                      <input type="date" value={batchDueDate} onChange={(e) => setBatchDueDate(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                    </div>
                   </div>
                   {batchTally.count > 0 && (
-                    <div className="flex items-center gap-4 text-sm shrink-0">
-                      <span className="font-medium text-brand-navy">{batchTally.count} member{batchTally.count > 1 ? 's' : ''}</span>
-                      <span className="font-bold text-brand-gold">Total: {fmtKES(batchTally.total || 0)}</span>
+                    <div className="flex items-center gap-4 text-sm">
+                      <span className="font-medium text-brand-navy">{batchTally.count} member{batchTally.count > 1 ? 's' : ''} ready</span>
+                      <span className="font-bold text-brand-gold ml-auto">Total: {fmtKES(batchTally.total || 0)}</span>
                     </div>
                   )}
                 </div>
@@ -368,9 +379,12 @@ export default function AgentInvoice() {
                           <tr key={inv.id} className="hover:bg-gray-50">
                             <td className="px-4 py-2.5 font-mono text-xs text-brand-navy font-semibold">{inv.invoice_number}</td>
                             <td className="px-4 py-2.5 text-gray-700">{inv.client_name}</td>
-                            <td className="px-4 py-2.5 text-gray-500 hidden sm:table-cell">Opt {inv.cover_option}</td>
+                            <td className="px-4 py-2.5 text-gray-500 hidden sm:table-cell">{inv.group_members ? `Group (${inv.group_members.length})` : `Opt ${inv.cover_option}`}</td>
                             <td className="px-4 py-2.5 text-right font-semibold">{fmtKES(inv.total_amount)}</td>
-                            <td className="px-4 py-2.5 text-gray-400 text-xs hidden md:table-cell">{format(new Date(inv.created_at), 'dd MMM yyyy')}</td>
+                            <td className="px-4 py-2.5 text-gray-400 text-xs hidden md:table-cell">
+                              <div>{format(new Date(inv.created_at), 'dd MMM yyyy')}</div>
+                              {inv.due_date && <div className="text-red-400">Due: {format(new Date(inv.due_date), 'dd MMM yy')}</div>}
+                            </td>
                             <td className="px-4 py-2.5 text-center">
                               <button onClick={async () => { setPdfLoading(inv.id); try { await downloadPdf(inv.id, inv.invoice_number); } catch { toast.error('PDF download failed'); } finally { setPdfLoading(null); } }} disabled={pdfLoading === inv.id} className="p-1.5 rounded-lg hover:bg-brand-gold/10 text-brand-navy transition-colors disabled:opacity-50">
                                 {pdfLoading === inv.id ? <div className="w-4 h-4 border-2 border-brand-gold border-t-transparent rounded-full animate-spin" /> : <MdDownload size={18} />}

@@ -49,7 +49,8 @@ export default function AdminInvoices() {
   const [pdfLoading, setPdfLoading] = useState(null);
 
   // Single generate
-  const [form, setForm] = useState({ client_name: '', cover_option: '', membership_fee: '200', notes: '' });
+  const [form, setForm] = useState({ client_name: '', cover_option: '', membership_fee: '200', notes: '', due_date: '' });
+  const [batchDueDate, setBatchDueDate] = useState('');
 
   // Batch generate
   const [rows, setRows] = useState([emptyRow()]);
@@ -81,7 +82,7 @@ export default function AdminInvoices() {
       try { await downloadPdf(invoice.id, invoice.invoice_number); }
       catch { toast.error('Invoice saved but PDF download failed. Check History.'); }
       finally { setPdfLoading(null); }
-      setForm({ client_name: '', cover_option: '', membership_fee: '200', notes: '' });
+      setForm({ client_name: '', cover_option: '', membership_fee: '200', notes: '', due_date: '' });
     },
     onError: (err) => toast.error(err.response?.data?.error || 'Failed to create invoice'),
   });
@@ -113,7 +114,7 @@ export default function AdminInvoices() {
       .filter((r) => r.client_name.trim() && r.cover_option)
       .map(({ client_name, cover_option }) => ({ client_name, cover_option: parseInt(cover_option) }));
     if (!members.length) return toast.error('Fill in at least one row');
-    groupMutation.mutate({ group_name: groupName.trim() || undefined, members });
+    groupMutation.mutate({ group_name: groupName.trim() || undefined, members, due_date: batchDueDate || undefined });
   }
 
   // Batch tally
@@ -164,28 +165,33 @@ export default function AdminInvoices() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
               <h2 className="font-heading text-lg font-semibold text-brand-navy mb-5">Invoice Details</h2>
-              <form onSubmit={(e) => { e.preventDefault(); if (!form.client_name.trim()) return toast.error('Client name is required'); if (!form.cover_option) return toast.error('Select a plan'); createMutation.mutate({ client_name: form.client_name, cover_option: parseInt(form.cover_option), plan_amount: planAmount, membership_fee: memberFee, notes: form.notes || undefined }); }} className="space-y-4">
+              <form onSubmit={(e) => { e.preventDefault(); if (!form.client_name.trim()) return toast.error('Client name is required'); if (!form.cover_option) return toast.error('Select a plan'); createMutation.mutate({ client_name: form.client_name, cover_option: parseInt(form.cover_option), plan_amount: planAmount, membership_fee: memberFee, notes: form.notes || undefined, due_date: form.due_date || undefined }); }} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Client Name <span className="text-red-500">*</span></label>
-                  <input type="text" name="client_name" value={form.client_name} onChange={(e) => setForm((f) => ({ ...f, client_name: e.target.value }))} placeholder="Full name of client" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Client Name <span className="text-red-500">*</span></label>
+                  <input type="text" name="client_name" value={form.client_name} onChange={(e) => setForm((f) => ({ ...f, client_name: e.target.value }))} placeholder="Full name of client" className="w-full border border-gray-200 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Cover Option / Plan <span className="text-red-500">*</span></label>
-                  <select name="cover_option" value={form.cover_option} onChange={(e) => setForm((f) => ({ ...f, cover_option: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold bg-white">
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Cover Option / Plan <span className="text-red-500">*</span></label>
+                  <select name="cover_option" value={form.cover_option} onChange={(e) => setForm((f) => ({ ...f, cover_option: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold bg-white">
                     <option value="">Select a plan</option>
                     {COVER_PLANS.map((p) => <option key={p.option} value={p.option}>{p.name} · Cover {p.cover}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Membership / Joining Fee (KES)</label>
-                  <input type="number" name="membership_fee" value={form.membership_fee} onChange={(e) => setForm((f) => ({ ...f, membership_fee: e.target.value }))} min="0" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
-                  <p className="text-xs text-gray-400 mt-1">Standard joining fee is KES 200</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">Joining Fee (KES)</label>
+                    <input type="number" name="membership_fee" value={form.membership_fee} onChange={(e) => setForm((f) => ({ ...f, membership_fee: e.target.value }))} min="0" className="w-full border border-gray-200 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">Pay By Date</label>
+                    <input type="date" name="due_date" value={form.due_date} onChange={(e) => setForm((f) => ({ ...f, due_date: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                  </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Notes (optional)</label>
                   <textarea name="notes" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} rows={2} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold resize-none" />
                 </div>
-                <button type="submit" disabled={createMutation.isPending || !!pdfLoading} className="w-full bg-brand-navy text-white font-semibold py-2.5 rounded-lg hover:bg-brand-navy-light transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
+                <button type="submit" disabled={createMutation.isPending || !!pdfLoading} className="w-full bg-brand-navy text-white font-semibold py-3 rounded-lg hover:bg-brand-navy-light transition-colors disabled:opacity-60 flex items-center justify-center gap-2 text-sm">
                   <MdDownload size={18} />{createMutation.isPending || pdfLoading ? 'Generating...' : 'Generate & Download Invoice'}
                 </button>
               </form>
@@ -274,7 +280,7 @@ export default function AdminInvoices() {
                   </button>
                 </div>
                 <div className="flex justify-end gap-3">
-                  <button onClick={() => { setGroupResult(null); setRows([emptyRow()]); setGroupName(''); }} className="btn-outline">New Group Invoice</button>
+                  <button onClick={() => { setGroupResult(null); setRows([emptyRow()]); setGroupName(''); setBatchDueDate(''); }} className="btn-outline">New Group Invoice</button>
                   <button onClick={() => { setGroupResult(null); setTab('history'); }} className="btn-primary">View History</button>
                 </div>
               </div>
@@ -282,14 +288,18 @@ export default function AdminInvoices() {
               /* Batch entry table */
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
                 {/* Group name + tally bar */}
-                <div className="px-4 py-3 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center gap-3">
-                  <div className="flex-1">
-                    <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group / Invoice Name (optional — e.g. Smith Family)" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                <div className="px-4 py-3 border-b border-gray-100 flex flex-col gap-3">
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group / Invoice Name (optional — e.g. Smith Family)" className="flex-1 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                    <div className="flex items-center gap-2 shrink-0">
+                      <label className="text-xs text-gray-500 font-medium whitespace-nowrap">Pay By:</label>
+                      <input type="date" value={batchDueDate} onChange={(e) => setBatchDueDate(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                    </div>
                   </div>
                   {batchTally.count > 0 && (
-                    <div className="flex items-center gap-4 text-sm shrink-0">
-                      <span className="font-medium text-brand-navy">{batchTally.count} member{batchTally.count > 1 ? 's' : ''}</span>
-                      <span className="font-bold text-brand-gold">Total: {fmtKES(batchTally.total || 0)}</span>
+                    <div className="flex items-center gap-4 text-sm">
+                      <span className="font-medium text-brand-navy">{batchTally.count} member{batchTally.count > 1 ? 's' : ''} ready</span>
+                      <span className="font-bold text-brand-gold ml-auto">Total: {fmtKES(batchTally.total || 0)}</span>
                     </div>
                   )}
                 </div>
@@ -360,7 +370,7 @@ export default function AdminInvoices() {
             <div className="flex gap-3 mb-4 flex-wrap">
               <select value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold bg-white">
                 <option value="">All Statuses</option>
-                <option value="draft">Draft</option>
+                <option value="draft">Pending</option>
                 <option value="paid">Paid</option>
               </select>
             </div>
@@ -394,11 +404,14 @@ export default function AdminInvoices() {
                             <td className="px-4 py-3 text-gray-500 hidden md:table-cell">{inv.group_members ? `Group (${inv.group_members.length})` : `Option ${inv.cover_option}`}</td>
                             <td className="px-4 py-3 text-right font-semibold text-brand-navy">{fmtKES(inv.total_amount)}</td>
                             <td className="px-4 py-3 text-gray-500 text-xs hidden lg:table-cell">{inv.created_by_name}<br /><span className="capitalize">{inv.created_by_role?.replace('_', ' ')}</span></td>
-                            <td className="px-4 py-3 text-gray-400 text-xs hidden lg:table-cell">{format(new Date(inv.created_at), 'dd MMM yyyy')}</td>
+                            <td className="px-4 py-3 text-gray-400 text-xs hidden lg:table-cell">
+                              <div>{format(new Date(inv.created_at), 'dd MMM yyyy')}</div>
+                              {inv.due_date && <div className="text-red-400 mt-0.5">Due: {format(new Date(inv.due_date), 'dd MMM yyyy')}</div>}
+                            </td>
                             <td className="px-4 py-3">
-                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${inv.status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                              <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${inv.status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
                                 {inv.status === 'paid' && <MdCheckCircle size={12} />}
-                                {inv.status.charAt(0).toUpperCase() + inv.status.slice(1)}
+                                {inv.status === 'paid' ? 'Paid' : 'Pending'}
                               </span>
                             </td>
                             <td className="px-4 py-3">
@@ -407,7 +420,7 @@ export default function AdminInvoices() {
                                   {pdfLoading === inv.id ? <div className="w-4 h-4 border-2 border-brand-gold border-t-transparent rounded-full animate-spin" /> : <MdDownload size={18} />}
                                 </button>
                                 {inv.status === 'draft' && (
-                                  <button onClick={() => statusMutation.mutate({ id: inv.id, status: 'paid' })} disabled={statusMutation.isPending} className="p-1.5 rounded-lg hover:bg-green-50 text-green-600 transition-colors disabled:opacity-50">
+                                  <button onClick={() => statusMutation.mutate({ id: inv.id, status: 'paid' })} disabled={statusMutation.isPending} title="Mark as Paid" className="p-1.5 rounded-lg hover:bg-green-50 text-green-600 transition-colors disabled:opacity-50">
                                     <MdCheckCircle size={18} />
                                   </button>
                                 )}
