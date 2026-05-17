@@ -7,6 +7,7 @@ const ctrl = require('./invoices.controller');
 const staffRoles = ['admin', 'super_admin', 'agent', 'team_leader'];
 
 router.post('/', verifyToken, requireRole(...staffRoles), ctrl.createInvoice);
+router.post('/group', verifyToken, requireRole(...staffRoles), ctrl.createGroupInvoice);
 router.post('/bulk', verifyToken, requireRole(...staffRoles), ctrl.bulkCreateInvoices);
 router.get('/', verifyToken, requireRole(...staffRoles), ctrl.listInvoices);
 router.get('/:id', verifyToken, requireRole(...staffRoles), ctrl.getInvoice);

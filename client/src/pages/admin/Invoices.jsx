@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import {
   MdReceiptLong, MdDownload, MdCheckCircle, MdHistory, MdAdd,
-  MdGroupAdd, MdDelete, MdClose, MdError,
+  MdGroupAdd, MdDelete,
 } from 'react-icons/md';
 
 const COVER_PLANS = [
@@ -53,7 +53,8 @@ export default function AdminInvoices() {
 
   // Batch generate
   const [rows, setRows] = useState([emptyRow()]);
-  const [batchResult, setBatchResult] = useState(null);
+  const [groupName, setGroupName] = useState('');
+  const [groupResult, setGroupResult] = useState(null);
 
   const selectedPlan = COVER_PLANS.find((p) => p.option === parseInt(form.cover_option));
   const planAmount = selectedPlan ? selectedPlan.premium : 0;
@@ -85,15 +86,15 @@ export default function AdminInvoices() {
     onError: (err) => toast.error(err.response?.data?.error || 'Failed to create invoice'),
   });
 
-  const bulkMutation = useMutation({
-    mutationFn: async (invoices) => { const { data } = await api.post('/invoices/bulk', { invoices }); return data.data; },
-    onSuccess: (result) => {
+  const groupMutation = useMutation({
+    mutationFn: async (payload) => { const { data } = await api.post('/invoices/group', payload); return data.data; },
+    onSuccess: (invoice) => {
       queryClient.invalidateQueries({ queryKey: ['admin-invoices'] });
-      setBatchResult(result);
-      if (result.created_count > 0) toast.success(`${result.created_count} invoice${result.created_count > 1 ? 's' : ''} created`);
-      if (result.failed_count > 0) toast.error(`${result.failed_count} row${result.failed_count > 1 ? 's' : ''} failed`);
+      setGroupResult(invoice);
+      const n = invoice.group_members?.length || 1;
+      toast.success(`Group invoice created for ${n} member${n > 1 ? 's' : ''}`);
     },
-    onError: (err) => toast.error(err.response?.data?.error || 'Batch creation failed'),
+    onError: (err) => toast.error(err.response?.data?.error || 'Group invoice creation failed'),
   });
 
   const statusMutation = useMutation({
@@ -108,15 +109,11 @@ export default function AdminInvoices() {
   function removeRow(id) { setRows((rs) => rs.length > 1 ? rs.filter((r) => r._id !== id) : rs); }
 
   function submitBatch() {
-    const invoices = rows
+    const members = rows
       .filter((r) => r.client_name.trim() && r.cover_option)
-      .map(({ client_name, cover_option, membership_fee, notes }) => ({
-        client_name, cover_option: parseInt(cover_option),
-        membership_fee: parseFloat(membership_fee) || 200,
-        notes: notes || undefined,
-      }));
-    if (!invoices.length) return toast.error('Fill in at least one row');
-    bulkMutation.mutate(invoices);
+      .map(({ client_name, cover_option }) => ({ client_name, cover_option: parseInt(cover_option) }));
+    if (!members.length) return toast.error('Fill in at least one row');
+    groupMutation.mutate({ group_name: groupName.trim() || undefined, members });
   }
 
   // Batch tally
@@ -152,7 +149,7 @@ export default function AdminInvoices() {
           ].map(({ key, label, icon: Icon }) => (
             <button
               key={key}
-              onClick={() => { setTab(key); if (key !== 'batch') setBatchResult(null); }}
+              onClick={() => { setTab(key); if (key !== 'batch') setGroupResult(null); }}
               className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
                 tab === key ? 'border-brand-gold text-brand-gold' : 'border-transparent text-gray-500 hover:text-brand-navy'
               }`}
@@ -227,109 +224,90 @@ export default function AdminInvoices() {
         {/* ── Batch Generate ── */}
         {tab === 'batch' && (
           <div>
-            {batchResult ? (
-              /* Results */
+            {groupResult ? (
+              /* Result — single group invoice */
               <div className="space-y-4">
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="bg-green-50 rounded-xl p-4 text-center"><p className="text-3xl font-bold text-green-600">{batchResult.created_count}</p><p className="text-sm text-green-700 font-medium">Created</p></div>
-                  <div className="bg-red-50 rounded-xl p-4 text-center"><p className="text-3xl font-bold text-red-500">{batchResult.failed_count}</p><p className="text-sm text-red-600 font-medium">Failed</p></div>
-                  <div className="bg-brand-navy/5 rounded-xl p-4 text-center"><p className="text-3xl font-bold text-brand-navy">{batchResult.summary?.total ?? batchResult.created_count + batchResult.failed_count}</p><p className="text-sm text-gray-600 font-medium">Submitted</p></div>
-                </div>
-
-                {batchResult.created.length > 0 && (
-                  <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                    <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
-                      <MdCheckCircle size={16} className="text-green-600" />
-                      <span className="text-sm font-semibold text-green-700">Created Invoices</span>
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
+                  <div className="flex items-center gap-3 mb-5">
+                    <MdCheckCircle size={24} className="text-green-600" />
+                    <div>
+                      <p className="font-semibold text-brand-navy text-lg">Group Invoice Created</p>
+                      <p className="text-sm text-gray-500">{groupResult.group_members?.length || 1} member{(groupResult.group_members?.length || 1) > 1 ? 's' : ''} on one invoice</p>
                     </div>
-                    <div className="overflow-x-auto">
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-5">
+                    <div className="bg-brand-navy/5 rounded-lg p-3">
+                      <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1">Invoice #</p>
+                      <p className="font-mono font-bold text-brand-navy text-sm">{groupResult.invoice_number}</p>
+                    </div>
+                    <div className="bg-brand-navy/5 rounded-lg p-3">
+                      <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1">Group Name</p>
+                      <p className="font-semibold text-brand-navy text-sm">{groupResult.client_name}</p>
+                    </div>
+                    <div className="bg-brand-gold/10 rounded-lg p-3">
+                      <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1">Total Due</p>
+                      <p className="font-bold text-brand-navy text-sm">{fmtKES(groupResult.total_amount)}</p>
+                    </div>
+                  </div>
+                  {groupResult.group_members?.length > 0 && (
+                    <div className="border border-gray-100 rounded-lg overflow-hidden mb-5">
                       <table className="w-full text-sm">
-                        <thead className="bg-green-50">
-                          <tr>
-                            <th className="text-left px-4 py-2.5 text-green-700 font-medium">Invoice #</th>
-                            <th className="text-left px-4 py-2.5 text-green-700 font-medium">Client</th>
-                            <th className="text-left px-4 py-2.5 text-green-700 font-medium hidden sm:table-cell">Plan</th>
-                            <th className="text-right px-4 py-2.5 text-green-700 font-medium">Total</th>
-                            <th className="text-center px-4 py-2.5 text-green-700 font-medium">PDF</th>
-                          </tr>
-                        </thead>
+                        <thead className="bg-gray-50"><tr><th className="text-left px-3 py-2 text-gray-500 font-medium">Member</th><th className="text-left px-3 py-2 text-gray-500 font-medium hidden sm:table-cell">Plan</th><th className="text-right px-3 py-2 text-gray-500 font-medium">Amount</th></tr></thead>
                         <tbody className="divide-y divide-gray-50">
-                          {batchResult.created.map((inv) => (
-                            <tr key={inv.id} className="hover:bg-gray-50">
-                              <td className="px-4 py-2.5 font-mono text-xs text-brand-navy font-semibold">{inv.invoice_number}</td>
-                              <td className="px-4 py-2.5 font-medium">{inv.client_name}</td>
-                              <td className="px-4 py-2.5 text-gray-500 hidden sm:table-cell">Option {inv.cover_option}</td>
-                              <td className="px-4 py-2.5 text-right font-semibold">{fmtKES(inv.total_amount)}</td>
-                              <td className="px-4 py-2.5 text-center">
-                                <button onClick={async () => { setPdfLoading(inv.id); try { await downloadPdf(inv.id, inv.invoice_number); } catch { toast.error('Download failed'); } finally { setPdfLoading(null); } }} disabled={pdfLoading === inv.id} className="p-1.5 rounded-lg hover:bg-brand-gold/10 text-brand-navy disabled:opacity-50">
-                                  {pdfLoading === inv.id ? <div className="w-4 h-4 border-2 border-brand-gold border-t-transparent rounded-full animate-spin" /> : <MdDownload size={18} />}
-                                </button>
-                              </td>
+                          {groupResult.group_members.map((m, i) => (
+                            <tr key={i} className="hover:bg-gray-50">
+                              <td className="px-3 py-2 font-medium">{m.client_name}</td>
+                              <td className="px-3 py-2 text-gray-500 hidden sm:table-cell">Option {m.cover_option} — {m.cover}</td>
+                              <td className="px-3 py-2 text-right font-semibold text-brand-navy">{fmtKES(m.total)}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-                  </div>
-                )}
-
-                {batchResult.failed.length > 0 && (
-                  <div className="bg-white rounded-xl border border-red-100 shadow-sm overflow-hidden">
-                    <div className="px-4 py-3 border-b border-red-100 flex items-center gap-2">
-                      <MdError size={16} className="text-red-500" />
-                      <span className="text-sm font-semibold text-red-600">Failed Rows</span>
-                    </div>
-                    <table className="w-full text-sm">
-                      <tbody className="divide-y divide-red-50">
-                        {batchResult.failed.map((f) => (
-                          <tr key={f.index} className="bg-red-50/30">
-                            <td className="px-4 py-2.5 text-gray-400 text-xs w-12">#{f.index + 1}</td>
-                            <td className="px-4 py-2.5 font-medium">{f.client_name}</td>
-                            <td className="px-4 py-2.5 text-red-500 text-xs">{f.reason}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
+                  )}
+                  <button
+                    onClick={async () => { setPdfLoading(groupResult.id); try { await downloadPdf(groupResult.id, groupResult.invoice_number); } catch { toast.error('PDF download failed'); } finally { setPdfLoading(null); } }}
+                    disabled={pdfLoading === groupResult.id}
+                    className="w-full btn-primary flex items-center justify-center gap-2"
+                  >
+                    {pdfLoading === groupResult.id ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Downloading...</> : <><MdDownload size={18} /> Download Group Invoice PDF</>}
+                  </button>
+                </div>
                 <div className="flex justify-end gap-3">
-                  <button onClick={() => { setBatchResult(null); setRows([emptyRow()]); }} className="btn-outline">Add More</button>
-                  <button onClick={() => { setBatchResult(null); setTab('history'); }} className="btn-primary">View History</button>
+                  <button onClick={() => { setGroupResult(null); setRows([emptyRow()]); setGroupName(''); }} className="btn-outline">New Group Invoice</button>
+                  <button onClick={() => { setGroupResult(null); setTab('history'); }} className="btn-primary">View History</button>
                 </div>
               </div>
             ) : (
               /* Batch entry table */
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                {/* Tally bar */}
-                {batchTally.count > 0 && (
-                  <div className="px-4 py-3 bg-brand-navy/5 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
-                    <span className="text-sm font-medium text-brand-navy">
-                      {batchTally.count} client{batchTally.count > 1 ? 's' : ''} ready
-                    </span>
-                    <span className="text-sm font-bold text-brand-gold">
-                      Total: {fmtKES(batchTally.total || 0)}
-                    </span>
+                {/* Group name + tally bar */}
+                <div className="px-4 py-3 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center gap-3">
+                  <div className="flex-1">
+                    <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group / Invoice Name (optional — e.g. Smith Family)" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
                   </div>
-                )}
+                  {batchTally.count > 0 && (
+                    <div className="flex items-center gap-4 text-sm shrink-0">
+                      <span className="font-medium text-brand-navy">{batchTally.count} member{batchTally.count > 1 ? 's' : ''}</span>
+                      <span className="font-bold text-brand-gold">Total: {fmtKES(batchTally.total || 0)}</span>
+                    </div>
+                  )}
+                </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm min-w-[640px]">
+                  <table className="w-full text-sm min-w-[480px]">
                     <thead>
                       <tr className="bg-brand-navy text-white">
                         <th className="text-left px-3 py-2.5 font-medium w-8">#</th>
-                        <th className="text-left px-3 py-2.5 font-medium">Client Name *</th>
+                        <th className="text-left px-3 py-2.5 font-medium">Member Name *</th>
                         <th className="text-left px-3 py-2.5 font-medium">Cover Option *</th>
-                        <th className="text-left px-3 py-2.5 font-medium">Joining Fee</th>
                         <th className="text-right px-3 py-2.5 font-medium">Total</th>
-                        <th className="text-left px-3 py-2.5 font-medium">Notes</th>
                         <th className="w-10 px-3 py-2.5"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {rows.map((row, i) => {
                         const plan = COVER_PLANS.find((p) => p.option === parseInt(row.cover_option));
-                        const rowTotal = plan ? plan.premium + (parseFloat(row.membership_fee) || 200) : 0;
                         return (
                           <tr key={row._id} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'}>
                             <td className="px-3 py-2 text-gray-400 text-xs">{i + 1}</td>
@@ -341,14 +319,8 @@ export default function AdminInvoices() {
                                 {COVER_PLANS.map((p) => <option key={p.option} value={p.option}>Opt {p.option} — {fmtKES(p.premium)}</option>)}
                               </select>
                             </td>
-                            <td className="px-2 py-1.5">
-                              <input type="number" value={row.membership_fee} onChange={(e) => updateRow(row._id, 'membership_fee', e.target.value)} min="0" className="w-24 border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
-                            </td>
-                            <td className="px-3 py-2 text-right font-semibold text-brand-navy whitespace-nowrap">
-                              {rowTotal ? fmtKES(rowTotal) : '—'}
-                            </td>
-                            <td className="px-2 py-1.5">
-                              <input type="text" value={row.notes} onChange={(e) => updateRow(row._id, 'notes', e.target.value)} placeholder="Optional" className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                            <td className="px-3 py-2 text-right font-semibold text-brand-navy whitespace-nowrap text-xs">
+                              {plan ? fmtKES(plan.premium + 200) : '—'}
                             </td>
                             <td className="px-2 py-2 text-center">
                               <button onClick={() => removeRow(row._id)} disabled={rows.length === 1} className="p-1 rounded hover:bg-red-50 text-red-400 disabled:opacity-20 transition-colors">
@@ -364,16 +336,16 @@ export default function AdminInvoices() {
 
                 <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between flex-wrap gap-3">
                   <button onClick={addRow} className="flex items-center gap-2 text-sm text-brand-navy hover:text-brand-gold font-medium transition-colors">
-                    <MdAdd size={18} /> Add Row
+                    <MdAdd size={18} /> Add Member
                   </button>
                   <button
                     onClick={submitBatch}
-                    disabled={bulkMutation.isPending || batchTally.count === 0}
+                    disabled={groupMutation.isPending || batchTally.count === 0}
                     className="btn-primary flex items-center gap-2"
                   >
-                    {bulkMutation.isPending
+                    {groupMutation.isPending
                       ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Generating...</>
-                      : <><MdGroupAdd size={18} /> Generate {batchTally.count > 0 ? `${batchTally.count} ` : ''}Invoice{batchTally.count !== 1 ? 's' : ''}</>
+                      : <><MdGroupAdd size={18} /> Generate Group Invoice ({batchTally.count || 0} Member{batchTally.count !== 1 ? 's' : ''})</>
                     }
                   </button>
                 </div>
@@ -419,7 +391,7 @@ export default function AdminInvoices() {
                           <tr key={inv.id} className="hover:bg-gray-50">
                             <td className="px-4 py-3 font-mono text-xs text-brand-navy font-semibold">{inv.invoice_number}</td>
                             <td className="px-4 py-3 font-medium text-gray-800">{inv.client_name}</td>
-                            <td className="px-4 py-3 text-gray-500 hidden md:table-cell">Option {inv.cover_option}</td>
+                            <td className="px-4 py-3 text-gray-500 hidden md:table-cell">{inv.group_members ? `Group (${inv.group_members.length})` : `Option ${inv.cover_option}`}</td>
                             <td className="px-4 py-3 text-right font-semibold text-brand-navy">{fmtKES(inv.total_amount)}</td>
                             <td className="px-4 py-3 text-gray-500 text-xs hidden lg:table-cell">{inv.created_by_name}<br /><span className="capitalize">{inv.created_by_role?.replace('_', ' ')}</span></td>
                             <td className="px-4 py-3 text-gray-400 text-xs hidden lg:table-cell">{format(new Date(inv.created_at), 'dd MMM yyyy')}</td>

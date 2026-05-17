@@ -192,8 +192,6 @@ async function generatePdf(req, res, next) {
       return res.status(403).json({ success: false, error: 'Access denied' });
     }
 
-    const plan = COVER_PLANS.find((p) => p.option === inv.cover_option);
-
     const doc = new PDFDocument({ margin: 0, size: 'A4' });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="invoice-${inv.invoice_number}.pdf"`);
@@ -204,143 +202,241 @@ async function generatePdf(req, res, next) {
     const M = 40;
     const CW = PW - M * 2;
 
-    // ── Header band ──────────────────────────────────────────────────────────
+    // ── Shared header band ───────────────────────────────────────────────────
     doc.rect(0, 0, PW, 120).fill(NAVY);
-
     doc.fontSize(22).font('Helvetica-Bold').fillColor(GOLD)
       .text('My Life Companion Welfare', M, 28, { width: CW - 140 });
-
     doc.fontSize(8.5).font('Helvetica').fillColor('#CCCCCC')
       .text('Development House, Floor 13, Suite 18', M, 56)
       .text('+254-118-043-715  |  info@mylife-companion.com', M, 68)
       .text('Underwritten by Old Mutual', M, 80);
-
-    // INVOICE badge top-right
     doc.rect(PW - M - 130, 22, 130, 80).fill(GOLD);
     doc.fontSize(20).font('Helvetica-Bold').fillColor(NAVY)
       .text('INVOICE', PW - M - 130, 32, { width: 130, align: 'center' });
 
-    // ── Invoice meta strip ───────────────────────────────────────────────────
+    // ── Shared meta strip ────────────────────────────────────────────────────
     let y = 140;
     doc.rect(M, y, CW, 56).fill(LIGHT_GRAY);
-
     doc.fontSize(8).font('Helvetica-Bold').fillColor('#666666')
       .text('INVOICE NUMBER', M + 12, y + 8)
       .text('DATE ISSUED', M + CW / 2 - 20, y + 8)
       .text('STATUS', M + CW - 100, y + 8);
-
     doc.fontSize(11).font('Helvetica-Bold').fillColor(NAVY)
       .text(inv.invoice_number, M + 12, y + 22);
-
     const issueDate = new Date(inv.created_at).toLocaleDateString('en-KE', {
       day: '2-digit', month: 'long', year: 'numeric',
     });
     doc.fontSize(11).font('Helvetica').fillColor('#222222')
       .text(issueDate, M + CW / 2 - 20, y + 22);
-
     const statusColor = inv.status === 'paid' ? GREEN : '#E67E22';
     doc.fontSize(10).font('Helvetica-Bold').fillColor(statusColor)
       .text(inv.status.toUpperCase(), M + CW - 100, y + 22);
 
-    // ── Two-column: Billed To / Issued By ───────────────────────────────────
+    // ── Shared billed-to / issued-by columns ─────────────────────────────────
     y = 220;
     const colW = CW / 2 - 10;
+    const rightX = M + colW + 20;
 
-    doc.fontSize(8).font('Helvetica-Bold').fillColor(GOLD)
-      .text('BILLED TO', M, y);
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(GOLD).text('BILLED TO', M, y);
     doc.moveTo(M, y + 13).lineTo(M + colW, y + 13).stroke(GOLD);
-
     doc.fontSize(13).font('Helvetica-Bold').fillColor(NAVY)
       .text(inv.client_name, M, y + 18, { width: colW });
 
-    const rightX = M + colW + 20;
-    doc.fontSize(8).font('Helvetica-Bold').fillColor(GOLD)
-      .text('ISSUED BY', rightX, y);
-    doc.moveTo(rightX, y + 13).lineTo(rightX + colW, y + 13).stroke(GOLD);
+    const groupMembers = Array.isArray(inv.group_members) ? inv.group_members : null;
+    if (groupMembers) {
+      doc.fontSize(9).font('Helvetica').fillColor('#555555')
+        .text(`Group Invoice — ${groupMembers.length} Member${groupMembers.length > 1 ? 's' : ''}`, M, y + 36, { width: colW });
+    }
 
+    doc.fontSize(8).font('Helvetica-Bold').fillColor(GOLD).text('ISSUED BY', rightX, y);
+    doc.moveTo(rightX, y + 13).lineTo(rightX + colW, y + 13).stroke(GOLD);
     const issuerRole = (inv.created_by_role || '').replace('_', ' ');
     doc.fontSize(11).font('Helvetica-Bold').fillColor(NAVY)
       .text(inv.created_by_name, rightX, y + 18, { width: colW });
     doc.fontSize(9).font('Helvetica').fillColor('#555555')
       .text(issuerRole.charAt(0).toUpperCase() + issuerRole.slice(1), rightX, y + 36, { width: colW });
 
-    // ── Line items table ─────────────────────────────────────────────────────
     y = 320;
 
-    // Table header
-    doc.rect(M, y, CW, 26).fill(NAVY);
-    doc.fontSize(9).font('Helvetica-Bold').fillColor('#FFFFFF')
-      .text('DESCRIPTION', M + 12, y + 8)
-      .text('COVER', M + CW - 270, y + 8)
-      .text('AMOUNT (KES)', M + CW - 130, y + 8);
+    if (groupMembers) {
+      // ── GROUP invoice: per-member line items ─────────────────────────────
+      const ROW_H = 26;
+      const colMember = M + 12;
+      const colPlan = M + CW - 330;
+      const colCover = M + CW - 210;
+      const colAmt = M + CW - 120;
 
-    y += 26;
+      // Table header
+      doc.rect(M, y, CW, 26).fill(NAVY);
+      doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#FFFFFF')
+        .text('MEMBER', colMember, y + 8)
+        .text('PLAN', colPlan, y + 8)
+        .text('COVER', colCover, y + 8)
+        .text('AMOUNT (KES)', colAmt, y + 8, { width: 110, align: 'right' });
+      y += 26;
 
-    function tableRow(label, sub, cover, amount, shade) {
-      if (shade) doc.rect(M, y, CW, 34).fill('#F9F9F9').stroke('#EEEEEE');
-      else doc.rect(M, y, CW, 34).stroke('#EEEEEE');
+      groupMembers.forEach((m, i) => {
+        const shade = i % 2 === 1;
+        if (shade) doc.rect(M, y, CW, ROW_H).fill('#F9F9F9');
+        else doc.rect(M, y, CW, ROW_H).fillColor('#FFFFFF').fill();
+        doc.rect(M, y, CW, ROW_H).stroke('#EEEEEE');
 
-      doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
-        .text(label, M + 12, y + 6, { width: CW - 280 });
-      if (sub) {
-        doc.fontSize(8).font('Helvetica').fillColor('#777777')
-          .text(sub, M + 12, y + 20, { width: CW - 280 });
+        doc.fontSize(9.5).font('Helvetica-Bold').fillColor(NAVY)
+          .text(m.client_name, colMember, y + 8, { width: colPlan - colMember - 8 });
+        doc.fontSize(9).font('Helvetica').fillColor('#444444')
+          .text(`Option ${m.cover_option}`, colPlan, y + 8, { width: colCover - colPlan - 8 })
+          .text(m.cover, colCover, y + 8, { width: colAmt - colCover - 8 });
+        doc.fontSize(9).font('Helvetica-Bold').fillColor(NAVY)
+          .text(fmtKES(m.total), colAmt, y + 8, { width: 110, align: 'right' });
+        y += ROW_H;
+      });
+
+      // Joining fee note
+      doc.fontSize(7.5).font('Helvetica').fillColor('#999999')
+        .text('* Each amount includes annual premium + KES 200 joining fee per member', M + 12, y + 4);
+      y += 18;
+
+      // Total row
+      doc.rect(M, y, CW, 36).fill(NAVY);
+      doc.fontSize(11).font('Helvetica-Bold').fillColor(GOLD)
+        .text(`TOTAL — ${groupMembers.length} Member${groupMembers.length > 1 ? 's' : ''}`, M + 12, y + 11)
+        .text(fmtKES(inv.total_amount), colAmt, y + 11, { width: 110, align: 'right' });
+      y += 36;
+
+    } else {
+      // ── SINGLE invoice: existing layout ──────────────────────────────────
+      const plan = COVER_PLANS.find((p) => p.option === inv.cover_option);
+
+      doc.rect(M, y, CW, 26).fill(NAVY);
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#FFFFFF')
+        .text('DESCRIPTION', M + 12, y + 8)
+        .text('COVER', M + CW - 270, y + 8)
+        .text('AMOUNT (KES)', M + CW - 130, y + 8);
+      y += 26;
+
+      function tableRow(label, sub, cover, amount, shade) {
+        if (shade) doc.rect(M, y, CW, 34).fill('#F9F9F9').stroke('#EEEEEE');
+        else doc.rect(M, y, CW, 34).stroke('#EEEEEE');
+        doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
+          .text(label, M + 12, y + 6, { width: CW - 280 });
+        if (sub) {
+          doc.fontSize(8).font('Helvetica').fillColor('#777777')
+            .text(sub, M + 12, y + 20, { width: CW - 280 });
+        }
+        doc.fontSize(10).font('Helvetica').fillColor('#444444')
+          .text(cover || '', M + CW - 270, y + 11, { width: 130 });
+        doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
+          .text(amount, M + CW - 130, y + 11, { width: 120, align: 'right' });
+        y += 34;
       }
-      doc.fontSize(10).font('Helvetica').fillColor('#444444')
-        .text(cover || '', M + CW - 270, y + 11, { width: 130 });
-      doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
-        .text(amount, M + CW - 130, y + 11, { width: 120, align: 'right' });
-      y += 34;
+
+      const planLabel = plan ? `Annual Premium — Cover Option ${plan.option}` : 'Annual Premium';
+      tableRow(planLabel, 'Extended family cover (annual)', plan ? plan.cover : '', fmtKES(inv.plan_amount), false);
+      tableRow('Membership / Joining Fee', 'One-time registration fee', '', fmtKES(inv.membership_fee), true);
+      if (inv.notes) tableRow('Additional Notes', inv.notes, '', '', false);
+
+      doc.rect(M, y, CW, 36).fill(NAVY);
+      doc.fontSize(12).font('Helvetica-Bold').fillColor(GOLD)
+        .text('TOTAL', M + 12, y + 11)
+        .text(fmtKES(inv.total_amount), M + CW - 130, y + 11, { width: 120, align: 'right' });
+      y += 36;
     }
 
-    const planLabel = plan
-      ? `Annual Premium — Cover Option ${plan.option}`
-      : 'Annual Premium';
-    const coverLabel = plan ? plan.cover : '';
-
-    tableRow(planLabel, 'Extended family cover (annual)', coverLabel, fmtKES(inv.plan_amount), false);
-    tableRow('Membership / Joining Fee', 'One-time registration fee', '', fmtKES(inv.membership_fee), true);
-
-    if (inv.notes) {
-      tableRow('Additional Notes', inv.notes, '', '', false);
-    }
-
-    // Total row
-    doc.rect(M, y, CW, 36).fill(NAVY);
-    doc.fontSize(12).font('Helvetica-Bold').fillColor(GOLD)
-      .text('TOTAL', M + 12, y + 11)
-      .text(fmtKES(inv.total_amount), M + CW - 130, y + 11, { width: 120, align: 'right' });
-    y += 36;
-
-    // ── Payment instructions ─────────────────────────────────────────────────
+    // ── Shared payment instructions ──────────────────────────────────────────
     y += 24;
     doc.rect(M, y, CW, 90).fill(LIGHT_GRAY);
     doc.rect(M, y, 4, 90).fill(GOLD);
-
     doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
       .text('PAYMENT INSTRUCTIONS', M + 16, y + 12);
-
     doc.fontSize(9).font('Helvetica').fillColor('#444444')
       .text('Pay via M-Pesa Paybill:', M + 16, y + 28)
       .text('Paybill Number:', M + 16, y + 42)
       .text('Account Number:', M + 16, y + 56)
       .text('Amount:', M + 16, y + 70);
-
     doc.fontSize(9).font('Helvetica-Bold').fillColor(NAVY)
       .text('625625', M + 140, y + 42)
       .text('20190955', M + 140, y + 56)
       .text(fmtKES(inv.total_amount), M + 140, y + 70);
+    y += 90;
 
     // ── Footer band ──────────────────────────────────────────────────────────
-    doc.rect(0, PH - 50, PW, 50).fill(NAVY);
+    const footerY = Math.max(y + 24, PH - 50);
+    doc.rect(0, footerY, PW, 50).fill(NAVY);
     doc.fontSize(8).font('Helvetica').fillColor('#AAAAAA')
       .text(
         'My Life Companion Welfare  ·  info@mylife-companion.com  ·  +254-118-043-715  ·  Underwritten by Old Mutual',
-        0, PH - 28,
+        0, footerY + 18,
         { width: PW, align: 'center' }
       );
 
     doc.end();
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function createGroupInvoice(req, res, next) {
+  try {
+    const { group_name, members, notes } = req.body;
+
+    if (!Array.isArray(members) || members.length === 0) {
+      return res.status(400).json({ success: false, error: 'members array is required and must not be empty' });
+    }
+    if (members.length > 200) {
+      return res.status(400).json({ success: false, error: 'Maximum 200 members per group invoice' });
+    }
+
+    const resolvedMembers = [];
+    for (let i = 0; i < members.length; i++) {
+      const { client_name, cover_option } = members[i];
+      if (!client_name || !cover_option) {
+        return res.status(400).json({ success: false, error: `Member ${i + 1}: client_name and cover_option are required` });
+      }
+      const optNum = parseInt(cover_option);
+      const plan = COVER_PLANS.find((p) => p.option === optNum);
+      if (!plan) {
+        return res.status(400).json({ success: false, error: `Member ${i + 1}: invalid cover_option ${cover_option} (must be 1–6)` });
+      }
+      resolvedMembers.push({
+        client_name: client_name.trim(),
+        cover_option: optNum,
+        plan_name: plan.name,
+        plan_amount: plan.premium,
+        membership_fee: 200,
+        cover: plan.cover,
+        total: plan.premium + 200,
+      });
+    }
+
+    const totalPremiums = resolvedMembers.reduce((s, m) => s + m.plan_amount, 0);
+    const totalFees = resolvedMembers.reduce((s, m) => s + m.membership_fee, 0);
+    const grandTotal = totalPremiums + totalFees;
+
+    let invoiceName = group_name?.trim();
+    if (!invoiceName) {
+      if (resolvedMembers.length === 1) {
+        invoiceName = resolvedMembers[0].client_name;
+      } else if (resolvedMembers.length === 2) {
+        invoiceName = `${resolvedMembers[0].client_name} & ${resolvedMembers[1].client_name}`;
+      } else {
+        invoiceName = `${resolvedMembers[0].client_name} & ${resolvedMembers.length - 1} others`;
+      }
+    }
+
+    const dbClient = await pool.connect();
+    try {
+      const invoiceNumber = await generateInvoiceNumber(dbClient);
+      const result = await dbClient.query(
+        `INSERT INTO invoices
+          (invoice_number, created_by, client_name, plan_amount, membership_fee, total_amount, notes, group_members)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [invoiceNumber, req.user.id, invoiceName, totalPremiums, totalFees, grandTotal, notes || null, JSON.stringify(resolvedMembers)]
+      );
+      return res.status(201).json({ success: true, data: result.rows[0] });
+    } finally {
+      dbClient.release();
+    }
   } catch (err) {
     next(err);
   }
@@ -434,4 +530,4 @@ async function bulkCreateInvoices(req, res, next) {
   }
 }
 
-module.exports = { createInvoice, bulkCreateInvoices, listInvoices, getInvoice, generatePdf, updateStatus };
+module.exports = { createInvoice, createGroupInvoice, bulkCreateInvoices, listInvoices, getInvoice, generatePdf, updateStatus };
