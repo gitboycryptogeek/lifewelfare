@@ -6,7 +6,24 @@ import { useMutation } from '@tanstack/react-query';
 import Layout from '../../components/Layout';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
-import { MdAdd, MdDelete, MdUploadFile, MdInsertDriveFile, MdPeople, MdPerson } from 'react-icons/md';
+import { MdAdd, MdDelete, MdUploadFile, MdInsertDriveFile, MdPeople, MdPerson, MdChildCare, MdElderly, MdInfo } from 'react-icons/md';
+
+const EXTRA_CHILD_RATE = [0, 300, 500, 500, 500, 500, 500];
+const PARENT_80_RATE = [0, 1000, 2000, 4000, 4000, 4000, 4000];
+
+function getAge(dob) {
+  if (!dob) return null;
+  const today = new Date();
+  const birth = new Date(dob);
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age;
+}
+
+function fmtKES(n) {
+  return `KES ${Number(n || 0).toLocaleString('en-KE', { minimumFractionDigits: 0 })}`;
+}
 
 const schema = z.object({
   full_name: z.string().min(2, 'Full name required'),
@@ -50,7 +67,7 @@ export default function AgentRegister() {
   const [docUploading, setDocUploading] = useState(false);
   const fileInputRef = useRef(null);
 
-  const { register, handleSubmit, control, formState: { errors }, reset } = useForm({
+  const { register, handleSubmit, control, watch, formState: { errors }, reset } = useForm({
     resolver: zodResolver(schema),
     defaultValues: {
       dependents: [],
@@ -357,6 +374,46 @@ export default function AgentRegister() {
                       </div>
                     </div>
                   ))}
+
+                  {/* Premium implication indicator */}
+                  {(() => {
+                    const deps = watch('dependents') || [];
+                    const coverOpt = parseInt(watch('cover_option')) || 1;
+                    const childCount = deps.filter((d) => d.relationship === 'child').length;
+                    const extraChildren = Math.max(0, childCount - 4);
+                    const parentsAbove80 = deps.filter((d) =>
+                      ['parent', 'parent-in-law'].includes(d.relationship) && getAge(d.dob) !== null && getAge(d.dob) > 80
+                    ).length;
+                    const extraChildPremium = (EXTRA_CHILD_RATE[coverOpt] || 0) * extraChildren;
+                    const parent80Premium = (PARENT_80_RATE[coverOpt] || 0) * parentsAbove80;
+                    const hasExtras = extraChildren > 0 || parentsAbove80 > 0;
+                    if (!hasExtras && deps.length === 0) return null;
+                    return (
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-800 uppercase tracking-wide">
+                          <MdInfo size={14} /> Premium Implications
+                        </div>
+                        {childCount > 0 && (
+                          <p className="text-xs text-gray-600">
+                            <MdChildCare size={12} className="inline mr-1 text-amber-600" />
+                            {childCount} child{childCount !== 1 ? 'ren' : ''} entered — {childCount <= 4 ? 'all included in base plan' : `4 included, ${extraChildren} extra @ ${fmtKES(EXTRA_CHILD_RATE[coverOpt] || 0)}/child = `}
+                            {extraChildren > 0 && <span className="font-semibold text-amber-700">{fmtKES(extraChildPremium)} additional</span>}
+                          </p>
+                        )}
+                        {parentsAbove80 > 0 && (
+                          <p className="text-xs text-gray-600">
+                            <MdElderly size={12} className="inline mr-1 text-amber-600" />
+                            {parentsAbove80} parent{parentsAbove80 !== 1 ? 's' : ''} above 80 detected @ {fmtKES(PARENT_80_RATE[coverOpt] || 0)}/person = <span className="font-semibold text-amber-700">{fmtKES(parent80Premium)} additional</span>
+                          </p>
+                        )}
+                        {hasExtras && (
+                          <p className="text-xs text-amber-700 font-medium border-t border-amber-200 pt-1.5 mt-1">
+                            Use these numbers when generating the invoice (Extra Children: {extraChildren}, Parents above 80: {parentsAbove80})
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div className="flex justify-between">
                     <button type="button" onClick={() => setStep(1)} className="btn-outline">Back</button>

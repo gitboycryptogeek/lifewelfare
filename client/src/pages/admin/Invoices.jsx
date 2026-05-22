@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import {
   MdReceiptLong, MdDownload, MdCheckCircle, MdHistory, MdAdd,
-  MdGroupAdd, MdDelete,
+  MdGroupAdd, MdDelete, MdChildCare, MdElderly,
 } from 'react-icons/md';
 
 const COVER_PLANS = [
@@ -18,12 +18,18 @@ const COVER_PLANS = [
   { option: 6, name: 'Option 6 — KES 15,000/yr', premium: 15000, cover: 'KES 500,000' },
 ];
 
+const EXTRA_CHILD_RATE = [0, 300, 500, 500, 500, 500, 500];
+const PARENT_80_RATE = [0, 1000, 2000, 4000, 4000, 4000, 4000];
+
+function extraChildRate(option) { return EXTRA_CHILD_RATE[option] || 0; }
+function parent80Rate(option) { return PARENT_80_RATE[option] || 0; }
+
 function fmtKES(amount) {
   return `KES ${Number(amount || 0).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`;
 }
 
 function emptyRow() {
-  return { _id: Math.random(), client_name: '', cover_option: '3', membership_fee: '200', notes: '' };
+  return { _id: Math.random(), client_name: '', cover_option: '3', membership_fee: '200', notes: '', extra_children: 0, parents_above_80: 0 };
 }
 
 async function downloadPdf(id, invoiceNumber) {
@@ -48,19 +54,22 @@ export default function AdminInvoices() {
   const [filterStatus, setFilterStatus] = useState('');
   const [pdfLoading, setPdfLoading] = useState(null);
 
-  // Single generate
-  const [form, setForm] = useState({ client_name: '', cover_option: '', membership_fee: '200', notes: '', due_date: '' });
+  const [form, setForm] = useState({
+    client_name: '', cover_option: '', membership_fee: '200', notes: '', due_date: '',
+    extra_children: 0, parents_above_80: 0,
+  });
   const [batchDueDate, setBatchDueDate] = useState('');
-
-  // Batch generate
   const [rows, setRows] = useState([emptyRow()]);
   const [groupName, setGroupName] = useState('');
   const [groupResult, setGroupResult] = useState(null);
 
   const selectedPlan = COVER_PLANS.find((p) => p.option === parseInt(form.cover_option));
   const planAmount = selectedPlan ? selectedPlan.premium : 0;
+  const optNum = selectedPlan ? selectedPlan.option : 0;
   const memberFee = parseFloat(form.membership_fee) || 0;
-  const total = planAmount + memberFee;
+  const extraChildPremium = extraChildRate(optNum) * (parseInt(form.extra_children) || 0);
+  const parent80Premium = parent80Rate(optNum) * (parseInt(form.parents_above_80) || 0);
+  const total = planAmount + memberFee + extraChildPremium + parent80Premium;
 
   const { data: invoicesData, isLoading } = useQuery({
     queryKey: ['admin-invoices', page, filterStatus],
@@ -82,7 +91,7 @@ export default function AdminInvoices() {
       try { await downloadPdf(invoice.id, invoice.invoice_number); }
       catch { toast.error('Invoice saved but PDF download failed. Check History.'); }
       finally { setPdfLoading(null); }
-      setForm({ client_name: '', cover_option: '', membership_fee: '200', notes: '', due_date: '' });
+      setForm({ client_name: '', cover_option: '', membership_fee: '200', notes: '', due_date: '', extra_children: 0, parents_above_80: 0 });
     },
     onError: (err) => toast.error(err.response?.data?.error || 'Failed to create invoice'),
   });
@@ -104,24 +113,35 @@ export default function AdminInvoices() {
     onError: () => toast.error('Failed to update status'),
   });
 
-  // Batch row helpers
   function updateRow(id, field, value) { setRows((rs) => rs.map((r) => r._id === id ? { ...r, [field]: value } : r)); }
   function addRow() { setRows((rs) => [...rs, emptyRow()]); }
   function removeRow(id) { setRows((rs) => rs.length > 1 ? rs.filter((r) => r._id !== id) : rs); }
 
+  function rowTotal(row) {
+    const plan = COVER_PLANS.find((p) => p.option === parseInt(row.cover_option));
+    if (!plan) return 0;
+    const opt = plan.option;
+    return plan.premium + (parseFloat(row.membership_fee) || 200)
+      + extraChildRate(opt) * (parseInt(row.extra_children) || 0)
+      + parent80Rate(opt) * (parseInt(row.parents_above_80) || 0);
+  }
+
   function submitBatch() {
     const members = rows
       .filter((r) => r.client_name.trim() && r.cover_option)
-      .map(({ client_name, cover_option }) => ({ client_name, cover_option: parseInt(cover_option) }));
+      .map(({ client_name, cover_option, extra_children, parents_above_80 }) => ({
+        client_name,
+        cover_option: parseInt(cover_option),
+        extra_children: parseInt(extra_children) || 0,
+        parents_above_80: parseInt(parents_above_80) || 0,
+      }));
     if (!members.length) return toast.error('Fill in at least one row');
     groupMutation.mutate({ group_name: groupName.trim() || undefined, members, due_date: batchDueDate || undefined });
   }
 
-  // Batch tally
   const batchTally = rows.reduce((acc, r) => {
     if (r.client_name.trim() && r.cover_option) {
-      const plan = COVER_PLANS.find((p) => p.option === parseInt(r.cover_option));
-      if (plan) acc.total = (acc.total || 0) + plan.premium + (parseFloat(r.membership_fee) || 200);
+      acc.total = (acc.total || 0) + rowTotal(r);
       acc.count = (acc.count || 0) + 1;
     }
     return acc;
@@ -141,7 +161,6 @@ export default function AdminInvoices() {
           </div>
         </div>
 
-        {/* Tabs */}
         <div className="flex gap-1 mb-6 border-b border-gray-200">
           {[
             { key: 'generate', label: 'Generate Invoice', icon: MdAdd },
@@ -165,31 +184,84 @@ export default function AdminInvoices() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
               <h2 className="font-heading text-lg font-semibold text-brand-navy mb-5">Invoice Details</h2>
-              <form onSubmit={(e) => { e.preventDefault(); if (!form.client_name.trim()) return toast.error('Client name is required'); if (!form.cover_option) return toast.error('Select a plan'); createMutation.mutate({ client_name: form.client_name, cover_option: parseInt(form.cover_option), plan_amount: planAmount, membership_fee: memberFee, notes: form.notes || undefined, due_date: form.due_date || undefined }); }} className="space-y-4">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!form.client_name.trim()) return toast.error('Client name is required');
+                  if (!form.cover_option) return toast.error('Select a plan');
+                  createMutation.mutate({
+                    client_name: form.client_name,
+                    cover_option: parseInt(form.cover_option),
+                    plan_amount: planAmount,
+                    membership_fee: memberFee,
+                    extra_children: parseInt(form.extra_children) || 0,
+                    parents_above_80: parseInt(form.parents_above_80) || 0,
+                    notes: form.notes || undefined,
+                    due_date: form.due_date || undefined,
+                  });
+                }}
+                className="space-y-4"
+              >
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">Client Name <span className="text-red-500">*</span></label>
-                  <input type="text" name="client_name" value={form.client_name} onChange={(e) => setForm((f) => ({ ...f, client_name: e.target.value }))} placeholder="Full name of client" className="w-full border border-gray-200 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                  <input type="text" value={form.client_name} onChange={(e) => setForm((f) => ({ ...f, client_name: e.target.value }))} placeholder="Full name of client" className="w-full border border-gray-200 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">Cover Option / Plan <span className="text-red-500">*</span></label>
-                  <select name="cover_option" value={form.cover_option} onChange={(e) => setForm((f) => ({ ...f, cover_option: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold bg-white">
+                  <select value={form.cover_option} onChange={(e) => setForm((f) => ({ ...f, cover_option: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold bg-white">
                     <option value="">Select a plan</option>
                     {COVER_PLANS.map((p) => <option key={p.option} value={p.option}>{p.name} · Cover {p.cover}</option>)}
                   </select>
                 </div>
+
+                {/* Extra premium fields */}
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
+                  <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Additional Premiums</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="flex items-center gap-1 text-sm font-medium text-gray-700 mb-1.5">
+                        <MdChildCare size={15} className="text-amber-600" /> Extra Children <span className="text-xs text-gray-400">(beyond 4)</span>
+                      </label>
+                      <input
+                        type="number" min="0" max="20"
+                        value={form.extra_children}
+                        onChange={(e) => setForm((f) => ({ ...f, extra_children: e.target.value }))}
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold"
+                      />
+                      {selectedPlan && parseInt(form.extra_children) > 0 && (
+                        <p className="text-xs text-amber-700 mt-1">{fmtKES(extraChildRate(optNum))} × {form.extra_children} = {fmtKES(extraChildPremium)}</p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="flex items-center gap-1 text-sm font-medium text-gray-700 mb-1.5">
+                        <MdElderly size={15} className="text-amber-600" /> Parents above 80
+                      </label>
+                      <input
+                        type="number" min="0" max="4"
+                        value={form.parents_above_80}
+                        onChange={(e) => setForm((f) => ({ ...f, parents_above_80: e.target.value }))}
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold"
+                      />
+                      {selectedPlan && parseInt(form.parents_above_80) > 0 && (
+                        <p className="text-xs text-amber-700 mt-1">{fmtKES(parent80Rate(optNum))} × {form.parents_above_80} = {fmtKES(parent80Premium)}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1.5">Joining Fee (KES)</label>
-                    <input type="number" name="membership_fee" value={form.membership_fee} onChange={(e) => setForm((f) => ({ ...f, membership_fee: e.target.value }))} min="0" className="w-full border border-gray-200 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                    <input type="number" value={form.membership_fee} onChange={(e) => setForm((f) => ({ ...f, membership_fee: e.target.value }))} min="0" className="w-full border border-gray-200 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1.5">Pay By Date</label>
-                    <input type="date" name="due_date" value={form.due_date} onChange={(e) => setForm((f) => ({ ...f, due_date: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                    <input type="date" value={form.due_date} onChange={(e) => setForm((f) => ({ ...f, due_date: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
                   </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">Notes (optional)</label>
-                  <textarea name="notes" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} rows={2} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold resize-none" />
+                  <textarea value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} rows={2} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold resize-none" />
                 </div>
                 <button type="submit" disabled={createMutation.isPending || !!pdfLoading} className="w-full bg-brand-navy text-white font-semibold py-3 rounded-lg hover:bg-brand-navy-light transition-colors disabled:opacity-60 flex items-center justify-center gap-2 text-sm">
                   <MdDownload size={18} />{createMutation.isPending || pdfLoading ? 'Generating...' : 'Generate & Download Invoice'}
@@ -211,6 +283,12 @@ export default function AdminInvoices() {
                     <div className="flex justify-between"><span className="text-gray-300">Annual Premium (Opt {selectedPlan.option})</span><span>{fmtKES(planAmount)}</span></div>
                     <div className="flex justify-between"><span className="text-gray-300">Cover</span><span className="text-green-400">{selectedPlan.cover}</span></div>
                     <div className="flex justify-between"><span className="text-gray-300">Joining Fee</span><span>{fmtKES(memberFee)}</span></div>
+                    {extraChildPremium > 0 && (
+                      <div className="flex justify-between"><span className="text-amber-300">Extra Children ({form.extra_children})</span><span>{fmtKES(extraChildPremium)}</span></div>
+                    )}
+                    {parent80Premium > 0 && (
+                      <div className="flex justify-between"><span className="text-amber-300">Parents above 80 ({form.parents_above_80})</span><span>{fmtKES(parent80Premium)}</span></div>
+                    )}
                   </div>
                 )}
               </div>
@@ -231,7 +309,6 @@ export default function AdminInvoices() {
         {tab === 'batch' && (
           <div>
             {groupResult ? (
-              /* Result — single group invoice */
               <div className="space-y-4">
                 <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
                   <div className="flex items-center gap-3 mb-5">
@@ -258,12 +335,23 @@ export default function AdminInvoices() {
                   {groupResult.group_members?.length > 0 && (
                     <div className="border border-gray-100 rounded-lg overflow-hidden mb-5">
                       <table className="w-full text-sm">
-                        <thead className="bg-gray-50"><tr><th className="text-left px-3 py-2 text-gray-500 font-medium">Member</th><th className="text-left px-3 py-2 text-gray-500 font-medium hidden sm:table-cell">Plan</th><th className="text-right px-3 py-2 text-gray-500 font-medium">Amount</th></tr></thead>
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="text-left px-3 py-2 text-gray-500 font-medium">Member</th>
+                            <th className="text-left px-3 py-2 text-gray-500 font-medium hidden sm:table-cell">Plan</th>
+                            <th className="text-left px-3 py-2 text-gray-500 font-medium hidden sm:table-cell">Extras</th>
+                            <th className="text-right px-3 py-2 text-gray-500 font-medium">Amount</th>
+                          </tr>
+                        </thead>
                         <tbody className="divide-y divide-gray-50">
                           {groupResult.group_members.map((m, i) => (
                             <tr key={i} className="hover:bg-gray-50">
                               <td className="px-3 py-2 font-medium">{m.client_name}</td>
                               <td className="px-3 py-2 text-gray-500 hidden sm:table-cell">Option {m.cover_option} — {m.cover}</td>
+                              <td className="px-3 py-2 text-xs text-amber-600 hidden sm:table-cell">
+                                {m.extra_children > 0 && <span className="mr-2">+{m.extra_children} child</span>}
+                                {m.parents_above_80 > 0 && <span>+{m.parents_above_80} prnt&gt;80</span>}
+                              </td>
                               <td className="px-3 py-2 text-right font-semibold text-brand-navy">{fmtKES(m.total)}</td>
                             </tr>
                           ))}
@@ -285,12 +373,10 @@ export default function AdminInvoices() {
                 </div>
               </div>
             ) : (
-              /* Batch entry table */
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                {/* Group name + tally bar */}
                 <div className="px-4 py-3 border-b border-gray-100 flex flex-col gap-3">
                   <div className="flex flex-col sm:flex-row gap-3">
-                    <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group / Invoice Name (optional — e.g. Smith Family)" className="flex-1 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                    <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group / Invoice Name (optional)" className="flex-1 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
                     <div className="flex items-center gap-2 shrink-0">
                       <label className="text-xs text-gray-500 font-medium whitespace-nowrap">Pay By:</label>
                       <input type="date" value={batchDueDate} onChange={(e) => setBatchDueDate(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
@@ -305,12 +391,14 @@ export default function AdminInvoices() {
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm min-w-[480px]">
+                  <table className="w-full text-sm min-w-[640px]">
                     <thead>
                       <tr className="bg-brand-navy text-white">
                         <th className="text-left px-3 py-2.5 font-medium w-8">#</th>
                         <th className="text-left px-3 py-2.5 font-medium">Member Name *</th>
                         <th className="text-left px-3 py-2.5 font-medium">Cover Option *</th>
+                        <th className="text-left px-3 py-2.5 font-medium w-24" title="Children beyond included 4"><MdChildCare size={14} className="inline mr-1" />Extra Kids</th>
+                        <th className="text-left px-3 py-2.5 font-medium w-24" title="Parents/In-laws above 80"><MdElderly size={14} className="inline mr-1" />Prnt&gt;80</th>
                         <th className="text-right px-3 py-2.5 font-medium">Total</th>
                         <th className="w-10 px-3 py-2.5"></th>
                       </tr>
@@ -318,6 +406,7 @@ export default function AdminInvoices() {
                     <tbody className="divide-y divide-gray-100">
                       {rows.map((row, i) => {
                         const plan = COVER_PLANS.find((p) => p.option === parseInt(row.cover_option));
+                        const rt = rowTotal(row);
                         return (
                           <tr key={row._id} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'}>
                             <td className="px-3 py-2 text-gray-400 text-xs">{i + 1}</td>
@@ -329,8 +418,14 @@ export default function AdminInvoices() {
                                 {COVER_PLANS.map((p) => <option key={p.option} value={p.option}>Opt {p.option} — {fmtKES(p.premium)}</option>)}
                               </select>
                             </td>
+                            <td className="px-2 py-1.5">
+                              <input type="number" min="0" max="20" value={row.extra_children} onChange={(e) => updateRow(row._id, 'extra_children', e.target.value)} className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold text-center" />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <input type="number" min="0" max="4" value={row.parents_above_80} onChange={(e) => updateRow(row._id, 'parents_above_80', e.target.value)} className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold text-center" />
+                            </td>
                             <td className="px-3 py-2 text-right font-semibold text-brand-navy whitespace-nowrap text-xs">
-                              {plan ? fmtKES(plan.premium + 200) : '—'}
+                              {plan ? fmtKES(rt) : '—'}
                             </td>
                             <td className="px-2 py-2 text-center">
                               <button onClick={() => removeRow(row._id)} disabled={rows.length === 1} className="p-1 rounded hover:bg-red-50 text-red-400 disabled:opacity-20 transition-colors">
@@ -348,15 +443,10 @@ export default function AdminInvoices() {
                   <button onClick={addRow} className="flex items-center gap-2 text-sm text-brand-navy hover:text-brand-gold font-medium transition-colors">
                     <MdAdd size={18} /> Add Member
                   </button>
-                  <button
-                    onClick={submitBatch}
-                    disabled={groupMutation.isPending || batchTally.count === 0}
-                    className="btn-primary flex items-center gap-2"
-                  >
+                  <button onClick={submitBatch} disabled={groupMutation.isPending || batchTally.count === 0} className="btn-primary flex items-center gap-2">
                     {groupMutation.isPending
                       ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Generating...</>
-                      : <><MdGroupAdd size={18} /> Generate Group Invoice ({batchTally.count || 0} Member{batchTally.count !== 1 ? 's' : ''})</>
-                    }
+                      : <><MdGroupAdd size={18} /> Generate Group Invoice ({batchTally.count || 0} Member{batchTally.count !== 1 ? 's' : ''})</>}
                   </button>
                 </div>
               </div>
@@ -389,6 +479,7 @@ export default function AdminInvoices() {
                           <th className="text-left px-4 py-3 font-medium">Invoice #</th>
                           <th className="text-left px-4 py-3 font-medium">Client</th>
                           <th className="text-left px-4 py-3 font-medium hidden md:table-cell">Plan</th>
+                          <th className="text-left px-4 py-3 font-medium hidden lg:table-cell">Extras</th>
                           <th className="text-right px-4 py-3 font-medium">Total</th>
                           <th className="text-left px-4 py-3 font-medium hidden lg:table-cell">Created By</th>
                           <th className="text-left px-4 py-3 font-medium hidden lg:table-cell">Date</th>
@@ -402,6 +493,14 @@ export default function AdminInvoices() {
                             <td className="px-4 py-3 font-mono text-xs text-brand-navy font-semibold">{inv.invoice_number}</td>
                             <td className="px-4 py-3 font-medium text-gray-800">{inv.client_name}</td>
                             <td className="px-4 py-3 text-gray-500 hidden md:table-cell">{inv.group_members ? `Group (${inv.group_members.length})` : `Option ${inv.cover_option}`}</td>
+                            <td className="px-4 py-3 text-xs text-amber-600 hidden lg:table-cell">
+                              {!inv.group_members && (
+                                <>
+                                  {inv.extra_children > 0 && <div>+{inv.extra_children} extra child</div>}
+                                  {inv.parents_above_80 > 0 && <div>+{inv.parents_above_80} prnt&gt;80</div>}
+                                </>
+                              )}
+                            </td>
                             <td className="px-4 py-3 text-right font-semibold text-brand-navy">{fmtKES(inv.total_amount)}</td>
                             <td className="px-4 py-3 text-gray-500 text-xs hidden lg:table-cell">{inv.created_by_name}<br /><span className="capitalize">{inv.created_by_role?.replace('_', ' ')}</span></td>
                             <td className="px-4 py-3 text-gray-400 text-xs hidden lg:table-cell">

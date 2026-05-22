@@ -10,6 +10,15 @@ const COVER_PLANS = [
   { option: 6, name: 'Option 6', premium: 15000, cover: 'KES 500,000' },
 ];
 
+// Additional child premium per child beyond the included 4
+const EXTRA_CHILD_PREMIUM = [0, 300, 500, 500, 500, 500, 500]; // indexed by option 1-6
+
+// Premium per parent/parent-in-law above 80 years
+const PARENT_ABOVE_80_PREMIUM = [0, 1000, 2000, 4000, 4000, 4000, 4000]; // indexed by option 1-6
+
+function extraChildRate(option) { return EXTRA_CHILD_PREMIUM[option] || 0; }
+function parent80Rate(option) { return PARENT_ABOVE_80_PREMIUM[option] || 0; }
+
 const NAVY = '#1A2B4A';
 const GOLD = '#F5A623';
 const GREEN = '#27AE60';
@@ -33,7 +42,10 @@ async function generateInvoiceNumber(client) {
 
 async function createInvoice(req, res, next) {
   try {
-    const { client_name, cover_option, plan_amount, membership_fee, notes, member_id, due_date } = req.body;
+    const {
+      client_name, cover_option, plan_amount, membership_fee,
+      notes, member_id, due_date, extra_children, parents_above_80,
+    } = req.body;
 
     if (!client_name || !cover_option) {
       return res.status(400).json({ success: false, error: 'client_name and cover_option are required' });
@@ -47,7 +59,13 @@ async function createInvoice(req, res, next) {
 
     const planAmt = plan_amount !== undefined ? parseFloat(plan_amount) : plan.premium;
     const memberFee = membership_fee !== undefined ? parseFloat(membership_fee) : 200;
-    const total = planAmt + memberFee;
+
+    const extraChildCount = Math.max(0, parseInt(extra_children) || 0);
+    const parent80Count = Math.max(0, parseInt(parents_above_80) || 0);
+    const extraChildPremium = extraChildRate(optNum) * extraChildCount;
+    const parent80Premium = parent80Rate(optNum) * parent80Count;
+
+    const total = planAmt + memberFee + extraChildPremium + parent80Premium;
 
     const dbClient = await pool.connect();
     try {
@@ -55,20 +73,16 @@ async function createInvoice(req, res, next) {
 
       const result = await dbClient.query(
         `INSERT INTO invoices
-          (invoice_number, created_by, member_id, client_name, cover_option, plan_amount, membership_fee, total_amount, notes, due_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          (invoice_number, created_by, member_id, client_name, cover_option, plan_amount, membership_fee,
+           extra_children, parents_above_80, extra_children_premium, parents_above_80_premium,
+           total_amount, notes, due_date)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          RETURNING *`,
         [
-          invoiceNumber,
-          req.user.id,
-          member_id || null,
-          client_name.trim(),
-          optNum,
-          planAmt,
-          memberFee,
-          total,
-          notes || null,
-          due_date || null,
+          invoiceNumber, req.user.id, member_id || null,
+          client_name.trim(), optNum, planAmt, memberFee,
+          extraChildCount, parent80Count, extraChildPremium, parent80Premium,
+          total, notes || null, due_date || null,
         ]
       );
 
@@ -283,7 +297,6 @@ async function generatePdf(req, res, next) {
       const colCover = M + CW - 210;
       const colAmt = M + CW - 120;
 
-      // Table header
       doc.rect(M, y, CW, 26).fill(NAVY);
       doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#FFFFFF')
         .text('MEMBER', colMember, y + 8)
@@ -298,22 +311,27 @@ async function generatePdf(req, res, next) {
         else doc.rect(M, y, CW, ROW_H).fillColor('#FFFFFF').fill();
         doc.rect(M, y, CW, ROW_H).stroke('#EEEEEE');
 
+        // Build plan label with extra info if applicable
+        let planLabel = `Option ${m.cover_option}`;
+        const extras = [];
+        if (m.extra_children > 0) extras.push(`+${m.extra_children} child`);
+        if (m.parents_above_80 > 0) extras.push(`+${m.parents_above_80} parent >80`);
+        if (extras.length) planLabel += ` (${extras.join(', ')})`;
+
         doc.fontSize(9.5).font('Helvetica-Bold').fillColor(NAVY)
           .text(m.client_name, colMember, y + 8, { width: colPlan - colMember - 8 });
         doc.fontSize(9).font('Helvetica').fillColor('#444444')
-          .text(`Option ${m.cover_option}`, colPlan, y + 8, { width: colCover - colPlan - 8 })
+          .text(planLabel, colPlan, y + 8, { width: colCover - colPlan - 8 })
           .text(m.cover, colCover, y + 8, { width: colAmt - colCover - 8 });
         doc.fontSize(9).font('Helvetica-Bold').fillColor(NAVY)
           .text(fmtKES(m.total), colAmt, y + 8, { width: 110, align: 'right' });
         y += ROW_H;
       });
 
-      // Joining fee note
       doc.fontSize(7.5).font('Helvetica').fillColor('#999999')
-        .text('* Each amount includes annual premium + KES 200 joining fee per member', M + 12, y + 4);
+        .text('* Each amount includes annual premium + KES 200 joining fee. Additional premiums apply for extra children or parents above 80.', M + 12, y + 4);
       y += 18;
 
-      // Total row
       doc.rect(M, y, CW, 36).fill(NAVY);
       doc.fontSize(11).font('Helvetica-Bold').fillColor(GOLD)
         .text(`TOTAL — ${groupMembers.length} Member${groupMembers.length > 1 ? 's' : ''}`, M + 12, y + 11)
@@ -321,7 +339,7 @@ async function generatePdf(req, res, next) {
       y += 36;
 
     } else {
-      // ── SINGLE invoice: existing layout ──────────────────────────────────
+      // ── SINGLE invoice: line items ────────────────────────────────────────
       const plan = COVER_PLANS.find((p) => p.option === inv.cover_option);
 
       doc.rect(M, y, CW, 26).fill(NAVY);
@@ -331,8 +349,9 @@ async function generatePdf(req, res, next) {
         .text('AMOUNT (KES)', M + CW - 130, y + 8);
       y += 26;
 
-      function tableRow(label, sub, cover, amount, shade) {
-        if (shade) doc.rect(M, y, CW, 34).fill('#F9F9F9').stroke('#EEEEEE');
+      let rowShade = false;
+      function tableRow(label, sub, cover, amount) {
+        if (rowShade) doc.rect(M, y, CW, 34).fill('#F9F9F9').stroke('#EEEEEE');
         else doc.rect(M, y, CW, 34).stroke('#EEEEEE');
         doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
           .text(label, M + 12, y + 6, { width: CW - 280 });
@@ -345,12 +364,37 @@ async function generatePdf(req, res, next) {
         doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
           .text(amount, M + CW - 130, y + 11, { width: 120, align: 'right' });
         y += 34;
+        rowShade = !rowShade;
       }
 
       const planLabel = plan ? `Annual Premium — Cover Option ${plan.option}` : 'Annual Premium';
-      tableRow(planLabel, 'Extended family cover (annual)', plan ? plan.cover : '', fmtKES(inv.plan_amount), false);
-      tableRow('Membership / Joining Fee', 'One-time registration fee', '', fmtKES(inv.membership_fee), true);
-      if (inv.notes) tableRow('Additional Notes', inv.notes, '', '', false);
+      tableRow(planLabel, 'Extended family cover (annual)', plan ? plan.cover : '', fmtKES(inv.plan_amount));
+      tableRow('Membership / Joining Fee', 'One-time registration fee', '', fmtKES(inv.membership_fee));
+
+      const extraChildren = parseInt(inv.extra_children) || 0;
+      const parents80 = parseInt(inv.parents_above_80) || 0;
+
+      if (extraChildren > 0) {
+        const rate = extraChildRate(inv.cover_option);
+        tableRow(
+          `Additional Children (${extraChildren})`,
+          `${extraChildren} child${extraChildren > 1 ? 'ren' : ''} beyond the included 4 — KES ${rate.toLocaleString('en-KE')} per child`,
+          '',
+          fmtKES(inv.extra_children_premium)
+        );
+      }
+
+      if (parents80 > 0) {
+        const rate = parent80Rate(inv.cover_option);
+        tableRow(
+          `Parents / Parents-in-law above 80 (${parents80})`,
+          `${parents80} person${parents80 > 1 ? 's' : ''} above 80 years — KES ${rate.toLocaleString('en-KE')} per person`,
+          '',
+          fmtKES(inv.parents_above_80_premium)
+        );
+      }
+
+      if (inv.notes) tableRow('Additional Notes', inv.notes, '', '');
 
       doc.rect(M, y, CW, 36).fill(NAVY);
       doc.fontSize(12).font('Helvetica-Bold').fillColor(GOLD)
@@ -394,7 +438,7 @@ async function generatePdf(req, res, next) {
 
 async function createGroupInvoice(req, res, next) {
   try {
-    const { group_name, members, notes } = req.body;
+    const { group_name, members, notes, due_date } = req.body;
 
     if (!Array.isArray(members) || members.length === 0) {
       return res.status(400).json({ success: false, error: 'members array is required and must not be empty' });
@@ -405,7 +449,7 @@ async function createGroupInvoice(req, res, next) {
 
     const resolvedMembers = [];
     for (let i = 0; i < members.length; i++) {
-      const { client_name, cover_option } = members[i];
+      const { client_name, cover_option, extra_children, parents_above_80 } = members[i];
       if (!client_name || !cover_option) {
         return res.status(400).json({ success: false, error: `Member ${i + 1}: client_name and cover_option are required` });
       }
@@ -414,6 +458,12 @@ async function createGroupInvoice(req, res, next) {
       if (!plan) {
         return res.status(400).json({ success: false, error: `Member ${i + 1}: invalid cover_option ${cover_option} (must be 1–6)` });
       }
+
+      const extraChildCount = Math.max(0, parseInt(extra_children) || 0);
+      const parent80Count = Math.max(0, parseInt(parents_above_80) || 0);
+      const extraChildPremium = extraChildRate(optNum) * extraChildCount;
+      const parent80Premium = parent80Rate(optNum) * parent80Count;
+
       resolvedMembers.push({
         client_name: client_name.trim(),
         cover_option: optNum,
@@ -421,11 +471,15 @@ async function createGroupInvoice(req, res, next) {
         plan_amount: plan.premium,
         membership_fee: 200,
         cover: plan.cover,
-        total: plan.premium + 200,
+        extra_children: extraChildCount,
+        parents_above_80: parent80Count,
+        extra_children_premium: extraChildPremium,
+        parents_above_80_premium: parent80Premium,
+        total: plan.premium + 200 + extraChildPremium + parent80Premium,
       });
     }
 
-    const totalPremiums = resolvedMembers.reduce((s, m) => s + m.plan_amount, 0);
+    const totalPremiums = resolvedMembers.reduce((s, m) => s + m.plan_amount + m.extra_children_premium + m.parents_above_80_premium, 0);
     const totalFees = resolvedMembers.reduce((s, m) => s + m.membership_fee, 0);
     const grandTotal = totalPremiums + totalFees;
 
@@ -440,15 +494,13 @@ async function createGroupInvoice(req, res, next) {
       }
     }
 
-    const { due_date } = req.body;
-
     const dbClient = await pool.connect();
     try {
       const invoiceNumber = await generateInvoiceNumber(dbClient);
       const result = await dbClient.query(
         `INSERT INTO invoices
           (invoice_number, created_by, client_name, plan_amount, membership_fee, total_amount, notes, group_members, due_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          RETURNING *`,
         [invoiceNumber, req.user.id, invoiceName, totalPremiums, totalFees, grandTotal, notes || null, JSON.stringify(resolvedMembers), due_date || null]
       );
@@ -502,7 +554,7 @@ async function bulkCreateInvoices(req, res, next) {
     const dbClient = await pool.connect();
     try {
       for (let i = 0; i < invoices.length; i++) {
-        const { client_name, cover_option, membership_fee, notes, member_id } = invoices[i];
+        const { client_name, cover_option, membership_fee, notes, member_id, extra_children, parents_above_80 } = invoices[i];
 
         if (!client_name || !cover_option) {
           failed.push({ index: i, client_name: client_name || '(blank)', reason: 'client_name and cover_option are required' });
@@ -519,15 +571,21 @@ async function bulkCreateInvoices(req, res, next) {
         try {
           const planAmt = plan.premium;
           const memberFee = membership_fee !== undefined ? parseFloat(membership_fee) : 200;
-          const total = planAmt + memberFee;
+          const extraChildCount = Math.max(0, parseInt(extra_children) || 0);
+          const parent80Count = Math.max(0, parseInt(parents_above_80) || 0);
+          const extraChildPremium = extraChildRate(optNum) * extraChildCount;
+          const parent80Premium = parent80Rate(optNum) * parent80Count;
+          const total = planAmt + memberFee + extraChildPremium + parent80Premium;
           const invoiceNumber = await generateInvoiceNumber(dbClient);
 
           const result = await dbClient.query(
             `INSERT INTO invoices
-              (invoice_number, created_by, member_id, client_name, cover_option, plan_amount, membership_fee, total_amount, notes)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+              (invoice_number, created_by, member_id, client_name, cover_option, plan_amount, membership_fee,
+               extra_children, parents_above_80, extra_children_premium, parents_above_80_premium, total_amount, notes)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
              RETURNING *`,
-            [invoiceNumber, req.user.id, member_id || null, client_name.trim(), optNum, planAmt, memberFee, total, notes || null]
+            [invoiceNumber, req.user.id, member_id || null, client_name.trim(), optNum, planAmt, memberFee,
+             extraChildCount, parent80Count, extraChildPremium, parent80Premium, total, notes || null]
           );
 
           created.push(result.rows[0]);
