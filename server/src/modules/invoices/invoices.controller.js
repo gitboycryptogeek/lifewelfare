@@ -260,20 +260,41 @@ async function generatePdf(req, res, next) {
 
     // ── Draw payment instructions block, return y after it ───────────────────
     function drawPaymentBlock(y) {
-      doc.rect(M, y, CW, 92).fill(LIGHT_GRAY);
-      doc.rect(M, y, 4, 92).fill(GOLD);
+      const BH = 100;
+      doc.rect(M, y, CW, BH).fill(LIGHT_GRAY);
+      doc.rect(M, y, 4, BH).fill(GOLD);
       doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
-        .text('PAYMENT INSTRUCTIONS', M + 16, y + 12);
+        .text('PAYMENT INSTRUCTIONS', M + 16, y + 10);
+
+      const half = Math.floor(CW / 2);
+      const rx   = M + half + 8;
+      const rv   = rx + 95;
+
+      // Left column — M-Pesa
+      doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#555555')
+        .text('M-PESA PAYBILL', M + 16, y + 26);
       doc.fontSize(9).font('Helvetica').fillColor('#444444')
-        .text('Pay via M-Pesa Paybill:', M + 16, y + 28)
-        .text('Paybill Number:', M + 16, y + 43)
-        .text('Account Number:', M + 16, y + 57)
-        .text('Amount:', M + 16, y + 71);
+        .text('Paybill Number:', M + 16, y + 40)
+        .text('Account Number:', M + 16, y + 54)
+        .text('Amount:', M + 16, y + 68);
       doc.fontSize(9).font('Helvetica-Bold').fillColor(NAVY)
-        .text('625625', M + 148, y + 43)
-        .text('20190955', M + 148, y + 57)
-        .text(fmtKES(inv.total_amount), M + 148, y + 71);
-      return y + 92;
+        .text('625625', M + 148, y + 40)
+        .text('20190955', M + 148, y + 54)
+        .text(fmtKES(inv.total_amount), M + 148, y + 68);
+
+      // Right column — Bank Transfer
+      doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#555555')
+        .text('BANK TRANSFER', rx, y + 26);
+      doc.fontSize(9).font('Helvetica').fillColor('#444444')
+        .text('Account Name:', rx, y + 40)
+        .text('Bank:', rx, y + 54)
+        .text('Account No:', rx, y + 68);
+      doc.fontSize(9).font('Helvetica-Bold').fillColor(NAVY)
+        .text('Life Companion Welfare', rv, y + 40)
+        .text('National Bank', rv, y + 54)
+        .text('7718883051', rv, y + 68);
+
+      return y + BH;
     }
 
     // =========================================================================
@@ -361,8 +382,8 @@ async function generatePdf(req, res, next) {
       const colAmt    = M + Math.floor(CW * 0.84);
 
       // Space needed after the last data row before we can close the invoice:
-      // footnote (20) + total bar (36) + gap (20) + payment block (92) + gap (14)
-      const POST_TABLE_SPACE = 20 + 36 + 20 + 92 + 14;
+      // footnote (20) + total bar (36) + gap (20) + payment block (100) + gap (14)
+      const POST_TABLE_SPACE = 20 + 36 + 20 + 100 + 14;
 
       y = drawGroupTableHeader(y, colMember, colPlan, colCover, colAmt);
 
@@ -522,7 +543,7 @@ async function generatePdf(req, res, next) {
 
     // ── Payment instructions (shared) ────────────────────────────────────────
     y += 20;
-    if (y + 92 > PAGE_BOTTOM) {
+    if (y + 100 > PAGE_BOTTOM) {
       y = addContinuationPage();
       y += 10;
     }
