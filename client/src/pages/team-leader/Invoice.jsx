@@ -7,6 +7,7 @@ import { format } from 'date-fns';
 import {
   MdReceiptLong, MdDownload, MdSearch, MdExpandMore, MdExpandLess,
   MdGroupAdd, MdAdd, MdDelete, MdCheckCircle, MdPerson, MdChildCare, MdElderly,
+  MdEdit, MdClose, MdSave, MdBusiness,
 } from 'react-icons/md';
 
 const COVER_PLANS = [
@@ -52,11 +53,14 @@ export default function TeamLeaderInvoice() {
   const [mode, setMode] = useState('single');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(null);
+  const [editingDraft, setEditingDraft] = useState(null);
 
   const [form, setForm] = useState({ client_name: '', cover_option: '', due_date: '', extra_children: 0, parents_above_80: 0 });
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
+
+  const [companyForm, setCompanyForm] = useState({ client_name: '', total_amount: '', notes: '', due_date: '' });
 
   const [rows, setRows] = useState([emptyRow()]);
   const [groupName, setGroupName] = useState('');
@@ -78,29 +82,106 @@ export default function TeamLeaderInvoice() {
 
   const createMutation = useMutation({
     mutationFn: async (payload) => { const { data } = await api.post('/invoices', payload); return data.data; },
-    onSuccess: async (invoice) => {
-      toast.success(`Invoice ${invoice.invoice_number} created`);
+    onSuccess: async (invoice, { _action }) => {
       queryClient.invalidateQueries({ queryKey: ['my-invoices-tl'] });
-      setPdfLoading(invoice.id);
-      try { await downloadPdf(invoice.id, invoice.invoice_number); }
-      catch { toast.error('Invoice saved but PDF download failed.'); }
-      finally { setPdfLoading(null); }
-      setForm({ client_name: '', cover_option: '', due_date: '', extra_children: 0, parents_above_80: 0 });
-      setSearch(''); setSearchResults([]);
+      if (_action === 'draft') {
+        toast.success(`Draft ${invoice.invoice_number} saved — find it in History below`);
+        resetForms();
+      } else {
+        toast.success(`Invoice ${invoice.invoice_number} created`);
+        setPdfLoading(invoice.id);
+        try { await downloadPdf(invoice.id, invoice.invoice_number); }
+        catch { toast.error('Invoice saved but PDF download failed.'); }
+        finally { setPdfLoading(null); }
+        resetForms();
+      }
     },
     onError: (err) => toast.error(err.response?.data?.error || 'Failed to create invoice'),
   });
 
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, payload }) => { const { data } = await api.patch(`/invoices/${id}`, payload); return data.data; },
+    onSuccess: async (invoice, { _action }) => {
+      queryClient.invalidateQueries({ queryKey: ['my-invoices-tl'] });
+      if (_action === 'draft') {
+        toast.success(`Draft ${invoice.invoice_number} updated`);
+        clearEditingDraft();
+      } else {
+        toast.success(`Invoice ${invoice.invoice_number} updated`);
+        setPdfLoading(invoice.id);
+        try { await downloadPdf(invoice.id, invoice.invoice_number); }
+        catch { toast.error('Invoice updated but PDF download failed.'); }
+        finally { setPdfLoading(null); }
+        clearEditingDraft();
+      }
+    },
+    onError: (err) => toast.error(err.response?.data?.error || 'Failed to update invoice'),
+  });
+
   const groupMutation = useMutation({
     mutationFn: async (payload) => { const { data } = await api.post('/invoices/group', payload); return data.data; },
-    onSuccess: (invoice) => {
+    onSuccess: (invoice, { _action }) => {
       queryClient.invalidateQueries({ queryKey: ['my-invoices-tl'] });
-      setGroupResult(invoice);
-      const n = invoice.group_members?.length || 1;
-      toast.success(`Group invoice created for ${n} member${n > 1 ? 's' : ''}`);
+      if (_action === 'draft') {
+        toast.success(`Group draft ${invoice.invoice_number} saved — find it in History below`);
+        setRows([emptyRow()]); setGroupName(''); setBatchDueDate('');
+      } else {
+        setGroupResult(invoice);
+        const n = invoice.group_members?.length || 1;
+        toast.success(`Group invoice created for ${n} member${n > 1 ? 's' : ''}`);
+      }
     },
     onError: (err) => toast.error(err.response?.data?.error || 'Group invoice creation failed'),
   });
+
+  function resetForms() {
+    setForm({ client_name: '', cover_option: '', due_date: '', extra_children: 0, parents_above_80: 0 });
+    setSearch(''); setSearchResults([]);
+    setCompanyForm({ client_name: '', total_amount: '', notes: '', due_date: '' });
+  }
+
+  function clearEditingDraft() {
+    setEditingDraft(null);
+    resetForms();
+    setRows([emptyRow()]); setGroupName(''); setBatchDueDate('');
+  }
+
+  function startEditDraft(inv) {
+    setEditingDraft(inv);
+    setGroupResult(null);
+    if (inv.group_members) {
+      setMode('batch');
+      setGroupName(inv.client_name || '');
+      setBatchDueDate(inv.due_date ? inv.due_date.slice(0, 10) : '');
+      setRows(inv.group_members.map((m) => ({
+        _id: Math.random(),
+        client_name: m.client_name,
+        cover_option: String(m.cover_option),
+        extra_children: m.extra_children || 0,
+        parents_above_80: m.parents_above_80 || 0,
+      })));
+    } else if (!inv.cover_option) {
+      setMode('company');
+      setCompanyForm({
+        client_name: inv.client_name || '',
+        total_amount: String(inv.total_amount || ''),
+        notes: inv.notes || '',
+        due_date: inv.due_date ? inv.due_date.slice(0, 10) : '',
+      });
+    } else {
+      setMode('single');
+      setForm({
+        client_name: inv.client_name || '',
+        cover_option: String(inv.cover_option || ''),
+        due_date: inv.due_date ? inv.due_date.slice(0, 10) : '',
+        extra_children: inv.extra_children || 0,
+        parents_above_80: inv.parents_above_80 || 0,
+      });
+      setSearch(inv.client_name || '');
+    }
+    setHistoryOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 
   async function handleMemberSearch(e) {
     const q = e.target.value;
@@ -117,11 +198,10 @@ export default function TeamLeaderInvoice() {
     setSearch(member.full_name); setSearchResults([]);
   }
 
-  function handleSubmit(e) {
-    e.preventDefault();
+  function submitSingle(action) {
     if (!form.client_name.trim()) return toast.error('Client name is required');
     if (!form.cover_option) return toast.error('Please select a cover option');
-    createMutation.mutate({
+    const payload = {
       client_name: form.client_name,
       cover_option: parseInt(form.cover_option),
       plan_amount: planAmount,
@@ -129,7 +209,31 @@ export default function TeamLeaderInvoice() {
       extra_children: parseInt(form.extra_children) || 0,
       parents_above_80: parseInt(form.parents_above_80) || 0,
       due_date: form.due_date || undefined,
-    });
+      _action: action,
+    };
+    if (editingDraft) {
+      updateMutation.mutate({ id: editingDraft.id, payload, _action: action });
+    } else {
+      createMutation.mutate(payload);
+    }
+  }
+
+  function submitCompany(action) {
+    if (!companyForm.client_name.trim()) return toast.error('Company / client name is required');
+    const amt = parseFloat(companyForm.total_amount);
+    if (!amt || amt <= 0) return toast.error('Enter a valid total amount');
+    const payload = {
+      client_name: companyForm.client_name,
+      total_amount: amt,
+      notes: companyForm.notes || undefined,
+      due_date: companyForm.due_date || undefined,
+      _action: action,
+    };
+    if (editingDraft) {
+      updateMutation.mutate({ id: editingDraft.id, payload, _action: action });
+    } else {
+      createMutation.mutate(payload);
+    }
   }
 
   function updateRow(id, field, value) { setRows((rs) => rs.map((r) => r._id === id ? { ...r, [field]: value } : r)); }
@@ -145,7 +249,7 @@ export default function TeamLeaderInvoice() {
       + parent80Rate(opt) * (parseInt(row.parents_above_80) || 0);
   }
 
-  function submitBatch() {
+  function submitBatch(action) {
     const members = rows
       .filter((r) => r.client_name.trim() && r.cover_option)
       .map(({ client_name, cover_option, extra_children, parents_above_80 }) => ({
@@ -155,7 +259,15 @@ export default function TeamLeaderInvoice() {
         parents_above_80: parseInt(parents_above_80) || 0,
       }));
     if (!members.length) return toast.error('Fill in at least one row');
-    groupMutation.mutate({ group_name: groupName.trim() || undefined, members, due_date: batchDueDate || undefined });
+    if (editingDraft) {
+      updateMutation.mutate({
+        id: editingDraft.id,
+        payload: { group_name: groupName.trim() || undefined, members, due_date: batchDueDate || undefined },
+        _action: action,
+      });
+    } else {
+      groupMutation.mutate({ group_name: groupName.trim() || undefined, members, due_date: batchDueDate || undefined, _action: action });
+    }
   }
 
   const batchTally = rows.reduce((acc, r) => {
@@ -167,6 +279,7 @@ export default function TeamLeaderInvoice() {
   }, {});
 
   const myInvoices = historyData?.data || [];
+  const isBusy = createMutation.isPending || updateMutation.isPending || !!pdfLoading;
 
   return (
     <Layout>
@@ -183,17 +296,33 @@ export default function TeamLeaderInvoice() {
             <button onClick={() => { setMode('single'); setGroupResult(null); }} className={`flex items-center gap-1.5 px-3 py-2 transition-colors ${mode === 'single' ? 'bg-brand-navy text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
               <MdPerson size={15} /> Single
             </button>
+            <button onClick={() => { setMode('company'); setGroupResult(null); }} className={`flex items-center gap-1.5 px-3 py-2 transition-colors ${mode === 'company' ? 'bg-brand-navy text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+              <MdBusiness size={15} /> Company
+            </button>
             <button onClick={() => setMode('batch')} className={`flex items-center gap-1.5 px-3 py-2 transition-colors ${mode === 'batch' ? 'bg-brand-navy text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
               <MdGroupAdd size={15} /> Batch
             </button>
           </div>
         </div>
 
+        {/* Editing draft banner */}
+        {editingDraft && (
+          <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <MdEdit size={16} className="text-amber-600" />
+              <span className="text-sm font-medium text-amber-800">Editing draft: <span className="font-mono">{editingDraft.invoice_number}</span></span>
+            </div>
+            <button onClick={clearEditingDraft} className="p-1 rounded hover:bg-amber-100 text-amber-600 transition-colors">
+              <MdClose size={16} />
+            </button>
+          </div>
+        )}
+
         {/* ── Single mode ── */}
         {mode === 'single' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <form onSubmit={(e) => { e.preventDefault(); submitSingle('generate'); }} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Search Registered Member (optional)</label>
                   <div className="relative">
@@ -226,7 +355,6 @@ export default function TeamLeaderInvoice() {
                   </select>
                 </div>
 
-                {/* Extra premium fields */}
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-3">
                   <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Additional Premiums</p>
                   <div className="grid grid-cols-2 gap-3">
@@ -234,12 +362,7 @@ export default function TeamLeaderInvoice() {
                       <label className="flex items-center gap-1 text-sm font-medium text-gray-700 mb-1">
                         <MdChildCare size={15} className="text-amber-600" /> Extra Children <span className="text-xs text-gray-400">(beyond 4)</span>
                       </label>
-                      <input
-                        type="number" min="0" max="20"
-                        value={form.extra_children}
-                        onChange={(e) => setForm((f) => ({ ...f, extra_children: e.target.value }))}
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold"
-                      />
+                      <input type="number" min="0" max="20" value={form.extra_children} onChange={(e) => setForm((f) => ({ ...f, extra_children: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
                       {selectedPlan && parseInt(form.extra_children) > 0 && (
                         <p className="text-xs text-amber-700 mt-1">{fmtKES(extraChildRate(optNum))} × {form.extra_children} = {fmtKES(extraChildPremium)}</p>
                       )}
@@ -248,12 +371,7 @@ export default function TeamLeaderInvoice() {
                       <label className="flex items-center gap-1 text-sm font-medium text-gray-700 mb-1">
                         <MdElderly size={15} className="text-amber-600" /> Parents above 80
                       </label>
-                      <input
-                        type="number" min="0" max="4"
-                        value={form.parents_above_80}
-                        onChange={(e) => setForm((f) => ({ ...f, parents_above_80: e.target.value }))}
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold"
-                      />
+                      <input type="number" min="0" max="4" value={form.parents_above_80} onChange={(e) => setForm((f) => ({ ...f, parents_above_80: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
                       {selectedPlan && parseInt(form.parents_above_80) > 0 && (
                         <p className="text-xs text-amber-700 mt-1">{fmtKES(parent80Rate(optNum))} × {form.parents_above_80} = {fmtKES(parent80Premium)}</p>
                       )}
@@ -279,9 +397,14 @@ export default function TeamLeaderInvoice() {
                   </div>
                 )}
 
-                <button type="submit" disabled={createMutation.isPending || !!pdfLoading} className="w-full bg-brand-navy text-white font-semibold py-3 rounded-lg hover:bg-brand-navy-light transition-colors disabled:opacity-60 flex items-center justify-center gap-2 text-sm">
-                  <MdDownload size={18} />{createMutation.isPending || pdfLoading ? 'Generating...' : 'Generate & Download Invoice'}
-                </button>
+                <div className="grid grid-cols-2 gap-3">
+                  <button type="button" onClick={() => submitSingle('draft')} disabled={isBusy} className="w-full border border-brand-navy text-brand-navy font-semibold py-3 rounded-lg hover:bg-brand-navy/5 transition-colors disabled:opacity-60 flex items-center justify-center gap-2 text-sm">
+                    <MdSave size={16} />{isBusy ? 'Saving...' : editingDraft ? 'Update Draft' : 'Save as Draft'}
+                  </button>
+                  <button type="submit" disabled={isBusy} className="w-full bg-brand-navy text-white font-semibold py-3 rounded-lg hover:bg-brand-navy-light transition-colors disabled:opacity-60 flex items-center justify-center gap-2 text-sm">
+                    <MdDownload size={18} />{isBusy ? 'Generating...' : editingDraft ? 'Generate Invoice' : 'Generate & Download'}
+                  </button>
+                </div>
               </form>
             </div>
 
@@ -311,6 +434,67 @@ export default function TeamLeaderInvoice() {
                 <div className="border-t border-white/20 pt-4 mt-4 flex justify-between items-center">
                   <span className="text-gray-300 text-sm">Total Due</span>
                   <span className="text-brand-gold font-bold text-xl">{selectedPlan ? fmtKES(total) : '—'}</span>
+                </div>
+                <div className="mt-3 bg-brand-gold/20 rounded-lg p-3 text-xs text-gray-300">M-Pesa Paybill <span className="text-brand-gold font-semibold">625625</span> · Account <span className="text-brand-gold font-semibold">20190955</span></div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Company mode ── */}
+        {mode === 'company' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
+              <h2 className="font-heading text-base font-semibold text-brand-navy mb-1">Company / General Invoice</h2>
+              <p className="text-sm text-gray-500 mb-4">Enter the company name and total amount directly.</p>
+              <form onSubmit={(e) => { e.preventDefault(); submitCompany('generate'); }} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Company / Client Name <span className="text-red-500">*</span></label>
+                  <input type="text" value={companyForm.client_name} onChange={(e) => setCompanyForm((f) => ({ ...f, client_name: e.target.value }))} placeholder="e.g. Acme Ltd" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Total Amount (KES) <span className="text-red-500">*</span></label>
+                  <input type="number" min="1" step="0.01" value={companyForm.total_amount} onChange={(e) => setCompanyForm((f) => ({ ...f, total_amount: e.target.value }))} placeholder="e.g. 50000" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Description / Notes (optional)</label>
+                  <textarea value={companyForm.notes} onChange={(e) => setCompanyForm((f) => ({ ...f, notes: e.target.value }))} rows={3} placeholder="e.g. Annual welfare cover for staff" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold resize-none" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Pay By Date</label>
+                  <input type="date" value={companyForm.due_date} onChange={(e) => setCompanyForm((f) => ({ ...f, due_date: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold" />
+                </div>
+                {companyForm.total_amount && (
+                  <div className="bg-brand-navy/5 rounded-lg p-3 flex justify-between items-center">
+                    <span className="text-sm text-gray-600 font-medium">Total Due</span>
+                    <span className="text-brand-navy font-bold text-lg">{fmtKES(parseFloat(companyForm.total_amount) || 0)}</span>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <button type="button" onClick={() => submitCompany('draft')} disabled={isBusy} className="w-full border border-brand-navy text-brand-navy font-semibold py-3 rounded-lg hover:bg-brand-navy/5 transition-colors disabled:opacity-60 flex items-center justify-center gap-2 text-sm">
+                    <MdSave size={16} />{isBusy ? 'Saving...' : editingDraft ? 'Update Draft' : 'Save as Draft'}
+                  </button>
+                  <button type="submit" disabled={isBusy} className="w-full bg-brand-navy text-white font-semibold py-3 rounded-lg hover:bg-brand-navy-light transition-colors disabled:opacity-60 flex items-center justify-center gap-2 text-sm">
+                    <MdDownload size={18} />{isBusy ? 'Generating...' : editingDraft ? 'Generate Invoice' : 'Generate & Download'}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div className="bg-brand-navy rounded-xl p-6 text-white flex flex-col justify-between">
+              <div>
+                <p className="text-brand-gold font-heading font-bold text-base mb-1">My Life Companion Welfare</p>
+                <p className="text-xs text-gray-400 mb-5">Underwritten by Old Mutual</p>
+                <div className="bg-white/10 rounded-lg p-3 mb-4">
+                  <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Billed To</p>
+                  <p className="font-semibold">{companyForm.client_name || '—'}</p>
+                </div>
+                {companyForm.notes && <p className="text-sm text-gray-300 mb-3">{companyForm.notes}</p>}
+              </div>
+              <div>
+                <div className="border-t border-white/20 pt-4 mt-4 flex justify-between items-center">
+                  <span className="text-gray-300 text-sm">Total Due</span>
+                  <span className="text-brand-gold font-bold text-xl">{companyForm.total_amount ? fmtKES(parseFloat(companyForm.total_amount) || 0) : '—'}</span>
                 </div>
                 <div className="mt-3 bg-brand-gold/20 rounded-lg p-3 text-xs text-gray-300">M-Pesa Paybill <span className="text-brand-gold font-semibold">625625</span> · Account <span className="text-brand-gold font-semibold">20190955</span></div>
               </div>
@@ -348,7 +532,6 @@ export default function TeamLeaderInvoice() {
                           <tr>
                             <th className="text-left px-3 py-2 text-gray-500 font-medium">Member</th>
                             <th className="text-left px-3 py-2 text-gray-500 font-medium hidden sm:table-cell">Plan</th>
-                            <th className="text-left px-3 py-2 text-gray-500 font-medium hidden sm:table-cell">Extras</th>
                             <th className="text-right px-3 py-2 text-gray-500 font-medium">Amount</th>
                           </tr>
                         </thead>
@@ -357,10 +540,6 @@ export default function TeamLeaderInvoice() {
                             <tr key={i} className="hover:bg-gray-50">
                               <td className="px-3 py-2 font-medium">{m.client_name}</td>
                               <td className="px-3 py-2 text-gray-500 hidden sm:table-cell">Option {m.cover_option} — {m.cover}</td>
-                              <td className="px-3 py-2 text-xs text-amber-600 hidden sm:table-cell">
-                                {m.extra_children > 0 && <span className="mr-2">+{m.extra_children} child</span>}
-                                {m.parents_above_80 > 0 && <span>+{m.parents_above_80} prnt&gt;80</span>}
-                              </td>
                               <td className="px-3 py-2 text-right font-semibold text-brand-navy">{fmtKES(m.total)}</td>
                             </tr>
                           ))}
@@ -447,15 +626,20 @@ export default function TeamLeaderInvoice() {
                   </table>
                 </div>
 
-                <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between gap-3">
+                <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between gap-3 flex-wrap">
                   <button onClick={addRow} className="flex items-center gap-2 text-sm text-brand-navy hover:text-brand-gold font-medium transition-colors">
                     <MdAdd size={18} /> Add Member
                   </button>
-                  <button onClick={submitBatch} disabled={groupMutation.isPending || batchTally.count === 0} className="btn-primary flex items-center gap-2">
-                    {groupMutation.isPending
-                      ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Generating...</>
-                      : <><MdGroupAdd size={18} /> Generate Group Invoice ({batchTally.count || 0} Member{batchTally.count !== 1 ? 's' : ''})</>}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => submitBatch('draft')} disabled={isBusy || batchTally.count === 0} className="flex items-center gap-2 border border-brand-navy text-brand-navy text-sm font-semibold px-4 py-2 rounded-lg hover:bg-brand-navy/5 transition-colors disabled:opacity-50">
+                      <MdSave size={16} />{isBusy ? 'Saving...' : editingDraft ? 'Update Draft' : 'Save as Draft'}
+                    </button>
+                    <button onClick={() => submitBatch('generate')} disabled={isBusy || batchTally.count === 0} className="btn-primary flex items-center gap-2">
+                      {isBusy
+                        ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Generating...</>
+                        : <><MdGroupAdd size={18} /> {editingDraft ? 'Generate Invoice' : `Group Invoice (${batchTally.count || 0})`}</>}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -480,10 +664,10 @@ export default function TeamLeaderInvoice() {
                           <th className="text-left px-4 py-2.5 font-medium">Invoice #</th>
                           <th className="text-left px-4 py-2.5 font-medium">Client</th>
                           <th className="text-left px-4 py-2.5 font-medium hidden sm:table-cell">Plan</th>
-                          <th className="text-left px-4 py-2.5 font-medium hidden md:table-cell">Extras</th>
                           <th className="text-right px-4 py-2.5 font-medium">Total</th>
                           <th className="text-left px-4 py-2.5 font-medium hidden md:table-cell">Date</th>
-                          <th className="text-center px-4 py-2.5 font-medium">PDF</th>
+                          <th className="text-left px-4 py-2.5 font-medium">Status</th>
+                          <th className="text-center px-4 py-2.5 font-medium">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
@@ -491,24 +675,30 @@ export default function TeamLeaderInvoice() {
                           <tr key={inv.id} className="hover:bg-gray-50">
                             <td className="px-4 py-2.5 font-mono text-xs text-brand-navy font-semibold">{inv.invoice_number}</td>
                             <td className="px-4 py-2.5 text-gray-700">{inv.client_name}</td>
-                            <td className="px-4 py-2.5 text-gray-500 hidden sm:table-cell">{inv.group_members ? `Group (${inv.group_members.length})` : `Opt ${inv.cover_option}`}</td>
-                            <td className="px-4 py-2.5 text-xs text-amber-600 hidden md:table-cell">
-                              {!inv.group_members && (
-                                <>
-                                  {inv.extra_children > 0 && <div>+{inv.extra_children} child</div>}
-                                  {inv.parents_above_80 > 0 && <div>+{inv.parents_above_80} prnt&gt;80</div>}
-                                </>
-                              )}
+                            <td className="px-4 py-2.5 text-gray-500 hidden sm:table-cell">
+                              {inv.group_members ? `Group (${inv.group_members.length})` : inv.cover_option ? `Opt ${inv.cover_option}` : 'General'}
                             </td>
                             <td className="px-4 py-2.5 text-right font-semibold">{fmtKES(inv.total_amount)}</td>
                             <td className="px-4 py-2.5 text-gray-400 text-xs hidden md:table-cell">
                               <div>{format(new Date(inv.created_at), 'dd MMM yyyy')}</div>
                               {inv.due_date && <div className="text-red-400">Due: {format(new Date(inv.due_date), 'dd MMM yy')}</div>}
                             </td>
+                            <td className="px-4 py-2.5">
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${inv.status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {inv.status === 'paid' ? 'Paid' : 'Pending'}
+                              </span>
+                            </td>
                             <td className="px-4 py-2.5 text-center">
-                              <button onClick={async () => { setPdfLoading(inv.id); try { await downloadPdf(inv.id, inv.invoice_number); } catch { toast.error('PDF download failed'); } finally { setPdfLoading(null); } }} disabled={pdfLoading === inv.id} className="p-1.5 rounded-lg hover:bg-brand-gold/10 text-brand-navy transition-colors disabled:opacity-50">
-                                {pdfLoading === inv.id ? <div className="w-4 h-4 border-2 border-brand-gold border-t-transparent rounded-full animate-spin" /> : <MdDownload size={18} />}
-                              </button>
+                              <div className="flex items-center justify-center gap-1">
+                                {inv.status === 'draft' && (
+                                  <button onClick={() => startEditDraft(inv)} title="Edit Draft" className="p-1.5 rounded-lg hover:bg-amber-50 text-amber-600 transition-colors">
+                                    <MdEdit size={16} />
+                                  </button>
+                                )}
+                                <button onClick={async () => { setPdfLoading(inv.id); try { await downloadPdf(inv.id, inv.invoice_number); } catch { toast.error('PDF download failed'); } finally { setPdfLoading(null); } }} disabled={pdfLoading === inv.id} className="p-1.5 rounded-lg hover:bg-brand-gold/10 text-brand-navy transition-colors disabled:opacity-50">
+                                  {pdfLoading === inv.id ? <div className="w-4 h-4 border-2 border-brand-gold border-t-transparent rounded-full animate-spin" /> : <MdDownload size={18} />}
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}

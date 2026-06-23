@@ -45,27 +45,36 @@ async function createInvoice(req, res, next) {
     const {
       client_name, cover_option, plan_amount, membership_fee,
       notes, member_id, due_date, extra_children, parents_above_80,
+      total_amount: directTotal,
     } = req.body;
 
-    if (!client_name || !cover_option) {
-      return res.status(400).json({ success: false, error: 'client_name and cover_option are required' });
+    if (!client_name) {
+      return res.status(400).json({ success: false, error: 'client_name is required' });
     }
 
-    const optNum = parseInt(cover_option);
-    const plan = COVER_PLANS.find((p) => p.option === optNum);
-    if (!plan) {
-      return res.status(400).json({ success: false, error: 'Invalid cover_option (must be 1–6)' });
+    const isGeneral = !cover_option;
+    let optNum = null, planAmt = 0, memberFee = 0, extraChildCount = 0, parent80Count = 0, extraChildPremium = 0, parent80Premium = 0, total = 0;
+
+    if (isGeneral) {
+      const t = parseFloat(directTotal);
+      if (isNaN(t) || t <= 0) {
+        return res.status(400).json({ success: false, error: 'total_amount is required for general invoices' });
+      }
+      total = t;
+    } else {
+      optNum = parseInt(cover_option);
+      const plan = COVER_PLANS.find((p) => p.option === optNum);
+      if (!plan) {
+        return res.status(400).json({ success: false, error: 'Invalid cover_option (must be 1–6)' });
+      }
+      planAmt = plan_amount !== undefined ? parseFloat(plan_amount) : plan.premium;
+      memberFee = membership_fee !== undefined ? parseFloat(membership_fee) : 200;
+      extraChildCount = Math.max(0, parseInt(extra_children) || 0);
+      parent80Count = Math.max(0, parseInt(parents_above_80) || 0);
+      extraChildPremium = extraChildRate(optNum) * extraChildCount;
+      parent80Premium = parent80Rate(optNum) * parent80Count;
+      total = planAmt + memberFee + extraChildPremium + parent80Premium;
     }
-
-    const planAmt = plan_amount !== undefined ? parseFloat(plan_amount) : plan.premium;
-    const memberFee = membership_fee !== undefined ? parseFloat(membership_fee) : 200;
-
-    const extraChildCount = Math.max(0, parseInt(extra_children) || 0);
-    const parent80Count = Math.max(0, parseInt(parents_above_80) || 0);
-    const extraChildPremium = extraChildRate(optNum) * extraChildCount;
-    const parent80Premium = parent80Rate(optNum) * parent80Count;
-
-    const total = planAmt + memberFee + extraChildPremium + parent80Premium;
 
     const dbClient = await pool.connect();
     try {
@@ -90,6 +99,110 @@ async function createInvoice(req, res, next) {
     } finally {
       dbClient.release();
     }
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function updateInvoice(req, res, next) {
+  try {
+    const { id } = req.params;
+    const role = req.user.role;
+    const isAdmin = role === 'admin' || role === 'super_admin';
+
+    const check = await pool.query(
+      `SELECT * FROM invoices WHERE id = $1`, [id]
+    );
+    if (!check.rows.length) return res.status(404).json({ success: false, error: 'Invoice not found' });
+    const existing = check.rows[0];
+    if (!isAdmin && existing.created_by !== req.user.id) return res.status(403).json({ success: false, error: 'Access denied' });
+    if (existing.status !== 'draft') return res.status(400).json({ success: false, error: 'Only draft invoices can be edited' });
+
+    const {
+      client_name, cover_option, plan_amount, membership_fee,
+      notes, member_id, due_date, extra_children, parents_above_80,
+      total_amount: directTotal, members: groupMembersInput, group_name,
+    } = req.body;
+
+    let fields;
+
+    if (Array.isArray(groupMembersInput)) {
+      // Group invoice update
+      const resolvedMembers = [];
+      for (let i = 0; i < groupMembersInput.length; i++) {
+        const { client_name: cn, cover_option: co, extra_children: ec, parents_above_80: p80 } = groupMembersInput[i];
+        if (!cn || !co) return res.status(400).json({ success: false, error: `Member ${i + 1}: client_name and cover_option are required` });
+        const optNum = parseInt(co);
+        const plan = COVER_PLANS.find((p) => p.option === optNum);
+        if (!plan) return res.status(400).json({ success: false, error: `Member ${i + 1}: invalid cover_option` });
+        const extraChildCount = Math.max(0, parseInt(ec) || 0);
+        const parent80Count = Math.max(0, parseInt(p80) || 0);
+        const ecp = extraChildRate(optNum) * extraChildCount;
+        const p80p = parent80Rate(optNum) * parent80Count;
+        resolvedMembers.push({
+          client_name: cn.trim(), cover_option: optNum, plan_name: plan.name, plan_amount: plan.premium,
+          membership_fee: 200, cover: plan.cover, extra_children: extraChildCount, parents_above_80: parent80Count,
+          extra_children_premium: ecp, parents_above_80_premium: p80p,
+          total: plan.premium + 200 + ecp + p80p,
+        });
+      }
+      const totalPremiums = resolvedMembers.reduce((s, m) => s + m.plan_amount + m.extra_children_premium + m.parents_above_80_premium, 0);
+      const totalFees = resolvedMembers.reduce((s, m) => s + m.membership_fee, 0);
+      let invoiceName = group_name?.trim() || existing.client_name;
+      fields = {
+        client_name: invoiceName, cover_option: null, plan_amount: totalPremiums, membership_fee: totalFees,
+        extra_children: 0, parents_above_80: 0, extra_children_premium: 0, parents_above_80_premium: 0,
+        total_amount: totalPremiums + totalFees, notes: notes || null, due_date: due_date || null,
+        member_id: null, group_members: JSON.stringify(resolvedMembers),
+      };
+    } else if (!cover_option) {
+      // General invoice update
+      const t = parseFloat(directTotal);
+      if (isNaN(t) || t <= 0) return res.status(400).json({ success: false, error: 'total_amount is required for general invoices' });
+      fields = {
+        client_name: client_name?.trim() || existing.client_name, cover_option: null, plan_amount: 0, membership_fee: 0,
+        extra_children: 0, parents_above_80: 0, extra_children_premium: 0, parents_above_80_premium: 0,
+        total_amount: t, notes: notes !== undefined ? (notes || null) : existing.notes,
+        due_date: due_date !== undefined ? (due_date || null) : existing.due_date,
+        member_id: null, group_members: null,
+      };
+    } else {
+      // Standard plan invoice update
+      const optNum = parseInt(cover_option);
+      const plan = COVER_PLANS.find((p) => p.option === optNum);
+      if (!plan) return res.status(400).json({ success: false, error: 'Invalid cover_option (must be 1–6)' });
+      const planAmt = plan_amount !== undefined ? parseFloat(plan_amount) : plan.premium;
+      const memberFee = membership_fee !== undefined ? parseFloat(membership_fee) : 200;
+      const extraChildCount = Math.max(0, parseInt(extra_children) || 0);
+      const parent80Count = Math.max(0, parseInt(parents_above_80) || 0);
+      const ecp = extraChildRate(optNum) * extraChildCount;
+      const p80p = parent80Rate(optNum) * parent80Count;
+      fields = {
+        client_name: client_name?.trim(), cover_option: optNum, plan_amount: planAmt, membership_fee: memberFee,
+        extra_children: extraChildCount, parents_above_80: parent80Count, extra_children_premium: ecp, parents_above_80_premium: p80p,
+        total_amount: planAmt + memberFee + ecp + p80p,
+        notes: notes !== undefined ? (notes || null) : existing.notes,
+        due_date: due_date !== undefined ? (due_date || null) : existing.due_date,
+        member_id: member_id || null, group_members: null,
+      };
+    }
+
+    const result = await pool.query(
+      `UPDATE invoices SET
+        client_name=$1, cover_option=$2, plan_amount=$3, membership_fee=$4,
+        extra_children=$5, parents_above_80=$6, extra_children_premium=$7, parents_above_80_premium=$8,
+        total_amount=$9, notes=$10, due_date=$11, member_id=$12, group_members=$13,
+        updated_at=NOW()
+       WHERE id=$14 RETURNING *`,
+      [
+        fields.client_name, fields.cover_option, fields.plan_amount, fields.membership_fee,
+        fields.extra_children, fields.parents_above_80, fields.extra_children_premium, fields.parents_above_80_premium,
+        fields.total_amount, fields.notes, fields.due_date, fields.member_id, fields.group_members,
+        id,
+      ]
+    );
+
+    return res.json({ success: true, data: result.rows[0] });
   } catch (err) {
     next(err);
   }
@@ -461,6 +574,33 @@ async function generatePdf(req, res, next) {
         .text(fmtKES(inv.total_amount), M + 12, y + 12, { width: CW - 24, align: 'right' });
       y += 36;
 
+    } else if (!inv.cover_option) {
+      // ── GENERAL invoice: single total line item ───────────────────────────
+      doc.rect(M, y, CW, 26).fill(NAVY);
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#FFFFFF')
+        .text('DESCRIPTION', M + 12, y + 8)
+        .text('AMOUNT (KES)', M + CW - 130, y + 8);
+      y += 26;
+
+      const descText = inv.notes || 'General Invoice';
+      doc.rect(M, y, CW, 40).stroke('#E8EBF0');
+      doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
+        .text(inv.client_name, M + 12, y + 7, { width: CW - 160 });
+      if (inv.notes) {
+        doc.fontSize(8.5).font('Helvetica').fillColor('#666666')
+          .text(inv.notes, M + 12, y + 22, { width: CW - 160 });
+      }
+      doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
+        .text(fmtKES(inv.total_amount), M + CW - 130, y + 14, { width: 120, align: 'right' });
+      y += 40;
+
+      if (y + 36 > PAGE_BOTTOM) y = addContinuationPage();
+      doc.rect(M, y, CW, 36).fill(NAVY);
+      doc.fontSize(12).font('Helvetica-Bold').fillColor(GOLD)
+        .text('TOTAL', M + 12, y + 11)
+        .text(fmtKES(inv.total_amount), M + CW - 130, y + 11, { width: 120, align: 'right' });
+      y += 36;
+
     } else {
       // ── SINGLE invoice: line items ────────────────────────────────────────
       const plan = COVER_PLANS.find((p) => p.option === inv.cover_option);
@@ -742,4 +882,4 @@ async function bulkCreateInvoices(req, res, next) {
   }
 }
 
-module.exports = { createInvoice, createGroupInvoice, bulkCreateInvoices, listInvoices, getInvoice, generatePdf, updateStatus };
+module.exports = { createInvoice, updateInvoice, createGroupInvoice, bulkCreateInvoices, listInvoices, getInvoice, generatePdf, updateStatus };

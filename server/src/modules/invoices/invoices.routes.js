@@ -13,5 +13,6 @@ router.get('/', verifyToken, requireRole(...staffRoles), ctrl.listInvoices);
 router.get('/:id', verifyToken, requireRole(...staffRoles), ctrl.getInvoice);
 router.get('/:id/pdf', verifyToken, requireRole(...staffRoles), ctrl.generatePdf);
 router.patch('/:id/status', verifyToken, requireRole('admin', 'super_admin'), ctrl.updateStatus);
+router.patch('/:id', verifyToken, requireRole(...staffRoles), ctrl.updateInvoice);
 
 module.exports = router;
