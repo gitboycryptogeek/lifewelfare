@@ -124,6 +124,56 @@ async function me(req, res, next) {
   }
 }
 
+async function updateMe(req, res, next) {
+  try {
+    const { full_name, email, phone } = req.body;
+
+    if (full_name !== undefined && !full_name.trim()) {
+      return res.status(400).json({ success: false, error: 'Full name cannot be empty' });
+    }
+    if (phone !== undefined && !phone.trim()) {
+      return res.status(400).json({ success: false, error: 'Phone cannot be empty' });
+    }
+
+    if (phone) {
+      const dup = await pool.query('SELECT id FROM users WHERE phone = $1 AND id <> $2', [phone, req.user.id]);
+      if (dup.rows.length > 0) {
+        return res.status(409).json({ success: false, error: 'Another account already uses this phone' });
+      }
+    }
+    if (email) {
+      const dup = await pool.query('SELECT id FROM users WHERE email = $1 AND id <> $2', [email, req.user.id]);
+      if (dup.rows.length > 0) {
+        return res.status(409).json({ success: false, error: 'Another account already uses this email' });
+      }
+    }
+
+    const fields = [];
+    const params = [];
+    let i = 1;
+    if (full_name !== undefined) { fields.push(`full_name = $${i++}`); params.push(full_name.trim()); }
+    if (email !== undefined) { fields.push(`email = $${i++}`); params.push(email?.trim() || null); }
+    if (phone !== undefined) { fields.push(`phone = $${i++}`); params.push(phone.trim()); }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ success: false, error: 'No fields to update' });
+    }
+
+    fields.push('updated_at = NOW()');
+    params.push(req.user.id);
+
+    const result = await pool.query(
+      `UPDATE users SET ${fields.join(', ')} WHERE id = $${i}
+       RETURNING id, full_name, email, phone, role, is_active, last_login, created_at`,
+      params
+    );
+
+    return res.json({ success: true, data: result.rows[0], message: 'Details updated' });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function changePassword(req, res, next) {
   try {
     const { old_password, new_password, otp_code } = req.body;
@@ -171,4 +221,4 @@ async function changePassword(req, res, next) {
   }
 }
 
-module.exports = { login, refresh, logout, me, changePassword };
+module.exports = { login, refresh, logout, me, updateMe, changePassword };

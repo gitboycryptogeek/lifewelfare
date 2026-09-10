@@ -25,6 +25,7 @@ router.post(
 router.post('/refresh', authController.refresh);
 router.post('/logout', verifyToken, authController.logout);
 router.get('/me', verifyToken, authController.me);
+router.patch('/me', verifyToken, authController.updateMe);
 router.post('/change-password', verifyToken, authController.changePassword);
 
 router.use('/otp', require('./auth.otp.routes'));

@@ -4,7 +4,7 @@ import Layout from '../../components/Layout';
 import api from '../../services/api';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
-import { MdPersonAdd, MdGroupAdd, MdAdd, MdDelete, MdCheckCircle, MdError, MdClose } from 'react-icons/md';
+import { MdPersonAdd, MdGroupAdd, MdAdd, MdDelete, MdEdit, MdCheckCircle, MdError, MdClose } from 'react-icons/md';
 
 const ROLES = ['agent', 'team_leader', 'admin', 'super_admin'];
 const ROLE_COLORS = {
@@ -25,6 +25,10 @@ export default function AdminUsers() {
   const [showSingle, setShowSingle] = useState(false);
   const [form, setForm] = useState({ full_name: '', phone: '', email: '', password: '', role: 'agent' });
   const [errors, setErrors] = useState({});
+
+  // ── Edit state ────────────────────────────────────────────────────────────
+  const [editUser, setEditUser] = useState(null); // null | user row
+  const [editForm, setEditForm] = useState({ full_name: '', phone: '', email: '', role: 'agent', password: '' });
 
   // ── Bulk-add state ────────────────────────────────────────────────────────
   const [showBulk, setShowBulk] = useState(false);
@@ -57,6 +61,25 @@ export default function AdminUsers() {
       qc.invalidateQueries(['admin-users']);
     },
     onError: (err) => toast.error(err.response?.data?.error || 'Failed'),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, payload }) => api.patch(`/admin/users/${id}`, payload),
+    onSuccess: () => {
+      toast.success('User updated');
+      qc.invalidateQueries(['admin-users']);
+      setEditUser(null);
+    },
+    onError: (err) => toast.error(err.response?.data?.error || 'Failed to update user'),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => api.delete(`/admin/users/${id}`),
+    onSuccess: () => {
+      toast.success('User deleted');
+      qc.invalidateQueries(['admin-users']);
+    },
+    onError: (err) => toast.error(err.response?.data?.error || 'Failed to delete user'),
   });
 
   const bulkMutation = useMutation({
@@ -164,14 +187,31 @@ export default function AdminUsers() {
                       {u.last_login ? format(new Date(u.last_login), 'dd MMM yyyy') : 'Never'}
                     </td>
                     <td className="py-3">
-                      {u.is_active && (
+                      <div className="flex items-center gap-3 whitespace-nowrap">
                         <button
-                          onClick={() => { if (confirm(`Deactivate ${u.full_name}?`)) deactivateMutation.mutate(u.id); }}
-                          className="text-red-500 hover:underline text-xs"
+                          onClick={() => {
+                            setEditUser(u);
+                            setEditForm({ full_name: u.full_name || '', phone: u.phone || '', email: u.email || '', role: u.role, password: '' });
+                          }}
+                          className="text-brand-navy hover:text-brand-gold text-xs font-medium inline-flex items-center gap-1"
                         >
-                          Deactivate
+                          <MdEdit size={15} /> Edit
                         </button>
-                      )}
+                        {u.is_active && (
+                          <button
+                            onClick={() => { if (confirm(`Deactivate ${u.full_name}?`)) deactivateMutation.mutate(u.id); }}
+                            className="text-yellow-600 hover:underline text-xs"
+                          >
+                            Deactivate
+                          </button>
+                        )}
+                        <button
+                          onClick={() => { if (confirm(`Permanently delete ${u.full_name}? This cannot be undone.`)) deleteMutation.mutate(u.id); }}
+                          className="text-red-500 hover:text-red-700 text-xs font-medium inline-flex items-center gap-1"
+                        >
+                          <MdDelete size={15} /> Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -219,6 +259,59 @@ export default function AdminUsers() {
                   className="btn-primary flex-1"
                 >
                   {createMutation.isPending ? 'Creating…' : 'Create User'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit User Modal ─────────────────────────────────────────────────── */}
+      {editUser && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-xl">
+            <h3 className="font-heading font-bold text-brand-navy text-lg mb-4">Edit {editUser.full_name}</h3>
+            <div className="space-y-4">
+              {[
+                { key: 'full_name', label: 'Full Name', type: 'text', placeholder: 'e.g. Jane Mwangi' },
+                { key: 'phone', label: 'Phone', type: 'tel', placeholder: '+254700000000' },
+                { key: 'email', label: 'Email (optional)', type: 'email', placeholder: 'jane@example.com' },
+                { key: 'password', label: 'New Password (leave blank to keep)', type: 'password', placeholder: 'Min 8 characters' },
+              ].map(({ key, label, type, placeholder }) => (
+                <div key={key}>
+                  <label className="label">{label}</label>
+                  <input
+                    type={type}
+                    value={editForm[key]}
+                    onChange={(e) => setEditForm((f) => ({ ...f, [key]: e.target.value }))}
+                    className="input"
+                    placeholder={placeholder}
+                  />
+                </div>
+              ))}
+              <div>
+                <label className="label">Role</label>
+                <select value={editForm.role} onChange={(e) => setEditForm((f) => ({ ...f, role: e.target.value }))} className="input">
+                  {ROLES.map((r) => <option key={r} value={r}>{r.replace('_', ' ')}</option>)}
+                </select>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setEditUser(null)} className="btn-outline flex-1">Cancel</button>
+                <button
+                  onClick={() => {
+                    const payload = {
+                      full_name: editForm.full_name,
+                      phone: editForm.phone,
+                      email: editForm.email,
+                      role: editForm.role,
+                    };
+                    if (editForm.password) payload.password = editForm.password;
+                    updateMutation.mutate({ id: editUser.id, payload });
+                  }}
+                  disabled={updateMutation.isPending}
+                  className="btn-primary flex-1"
+                >
+                  {updateMutation.isPending ? 'Saving…' : 'Save Changes'}
                 </button>
               </div>
             </div>

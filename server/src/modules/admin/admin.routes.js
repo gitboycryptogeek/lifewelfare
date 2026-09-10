@@ -19,6 +19,19 @@ router.post(
   ctrl.createUser
 );
 router.post('/users/bulk', verifyToken, requireRole('super_admin'), ctrl.bulkCreateUsers);
+router.patch(
+  '/users/:id',
+  verifyToken,
+  requireRole('super_admin'),
+  [
+    body('full_name').optional().notEmpty().withMessage('Full name cannot be empty'),
+    body('phone').optional().notEmpty().withMessage('Phone cannot be empty'),
+    body('role').optional().isIn(['agent', 'admin', 'super_admin', 'team_leader']).withMessage('Invalid role'),
+    body('password').optional().isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
+  ],
+  ctrl.updateUser
+);
+router.delete('/users/:id', verifyToken, requireRole('super_admin'), ctrl.deleteUser);
 router.patch('/users/:id/deactivate', verifyToken, requireRole('super_admin'), ctrl.deactivateUser);
 router.get('/audit-logs', verifyToken, requireRole('super_admin'), ctrl.getAuditLogs);
 

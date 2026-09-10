@@ -102,6 +102,115 @@ async function deactivateUser(req, res, next) {
   }
 }
 
+async function updateUser(req, res, next) {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, error: errors.array()[0].msg });
+    }
+
+    const { id } = req.params;
+    const { full_name, phone, email, role, password } = req.body;
+
+    const existing = await pool.query('SELECT id, role FROM users WHERE id = $1', [id]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    // Prevent an admin from demoting their own super_admin account (lock-out guard)
+    if (id === req.user.id && role && role !== req.user.role) {
+      return res.status(400).json({ success: false, error: 'You cannot change your own role' });
+    }
+
+    if (phone) {
+      const dup = await pool.query('SELECT id FROM users WHERE phone = $1 AND id <> $2', [phone, id]);
+      if (dup.rows.length > 0) {
+        return res.status(409).json({ success: false, error: 'Another user already uses this phone' });
+      }
+    }
+    if (email) {
+      const dup = await pool.query('SELECT id FROM users WHERE email = $1 AND id <> $2', [email, id]);
+      if (dup.rows.length > 0) {
+        return res.status(409).json({ success: false, error: 'Another user already uses this email' });
+      }
+    }
+
+    const fields = [];
+    const params = [];
+    let i = 1;
+    if (full_name !== undefined) { fields.push(`full_name = $${i++}`); params.push(full_name); }
+    if (phone !== undefined) { fields.push(`phone = $${i++}`); params.push(phone); }
+    if (email !== undefined) { fields.push(`email = $${i++}`); params.push(email || null); }
+    if (role !== undefined) { fields.push(`role = $${i++}`); params.push(role); }
+    if (password) {
+      const hash = await bcrypt.hash(password, 12);
+      fields.push(`password_hash = $${i++}`); params.push(hash);
+    }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ success: false, error: 'No fields to update' });
+    }
+
+    fields.push(`updated_at = NOW()`);
+    params.push(id);
+
+    const result = await pool.query(
+      `UPDATE users SET ${fields.join(', ')} WHERE id = $${i}
+       RETURNING id, full_name, phone, email, role, is_active, last_login, created_at, team_leader_id`,
+      params
+    );
+
+    return res.json({ success: true, data: result.rows[0], message: 'User updated' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function deleteUser(req, res, next) {
+  try {
+    const { id } = req.params;
+
+    if (id === req.user.id) {
+      return res.status(400).json({ success: false, error: 'Cannot delete your own account' });
+    }
+
+    const existing = await pool.query('SELECT id, full_name FROM users WHERE id = $1', [id]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    // Guard against orphaning historical records tied to this user via
+    // restricting foreign keys. If any exist, deactivation is the safe path.
+    const refs = await pool.query(
+      `SELECT
+         (SELECT COUNT(*) FROM members WHERE registered_by_agent = $1) AS registered_members,
+         (SELECT COUNT(*) FROM members WHERE approved_by = $1)         AS approved_members,
+         (SELECT COUNT(*) FROM members WHERE user_id = $1)             AS linked_member,
+         (SELECT COUNT(*) FROM prospects WHERE registered_by_agent = $1) AS prospects,
+         (SELECT COUNT(*) FROM invoices WHERE created_by = $1)          AS invoices,
+         (SELECT COUNT(*) FROM claims WHERE reviewed_by = $1 OR submitted_by = $1) AS claims,
+         (SELECT COUNT(*) FROM communications WHERE sent_by = $1)       AS communications,
+         (SELECT COUNT(*) FROM audit_logs WHERE user_id = $1)           AS audit_logs`,
+      [id]
+    );
+    const r = refs.rows[0];
+    const blocking = Object.entries(r).filter(([, v]) => parseInt(v) > 0);
+    if (blocking.length > 0) {
+      const detail = blocking.map(([k, v]) => `${v} ${k.replace(/_/g, ' ')}`).join(', ');
+      return res.status(409).json({
+        success: false,
+        error: `Cannot delete: user has linked records (${detail}). Deactivate the user instead.`,
+      });
+    }
+
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+
+    return res.json({ success: true, message: 'User deleted' });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function getAuditLogs(req, res, next) {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -317,4 +426,4 @@ async function bulkCreateUsers(req, res, next) {
   }
 }
 
-module.exports = { listUsers, createUser, bulkCreateUsers, deactivateUser, getAuditLogs, listTeamLeaders, assignTeamLeader, unassignTeamLeader };
+module.exports = { listUsers, createUser, bulkCreateUsers, updateUser, deleteUser, deactivateUser, getAuditLogs, listTeamLeaders, assignTeamLeader, unassignTeamLeader };
