@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Layout from '../../components/Layout';
 import api from '../../services/api';
+import { getInvoiceCompany } from '../../utils/invoiceCompanies';
+import InvoiceCompanyTabs, { InvoicePreviewBrand, InvoicePlanBenefits, previewPanelBg } from '../../components/InvoiceCompanyTabs';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import {
@@ -9,21 +11,6 @@ import {
   MdGroupAdd, MdAdd, MdDelete, MdCheckCircle, MdPerson, MdChildCare, MdElderly,
   MdEdit, MdClose, MdSave, MdBusiness,
 } from 'react-icons/md';
-
-const COVER_PLANS = [
-  { option: 1, name: 'Option 1 — KES 1,500/yr', premium: 1500, cover: 'KES 50,000' },
-  { option: 2, name: 'Option 2 — KES 3,000/yr', premium: 3000, cover: 'KES 100,000' },
-  { option: 3, name: 'Option 3 — KES 6,000/yr', premium: 6000, cover: 'KES 200,000' },
-  { option: 4, name: 'Option 4 — KES 9,000/yr', premium: 9000, cover: 'KES 300,000' },
-  { option: 5, name: 'Option 5 — KES 12,000/yr', premium: 12000, cover: 'KES 400,000' },
-  { option: 6, name: 'Option 6 — KES 15,000/yr', premium: 15000, cover: 'KES 500,000' },
-];
-
-const EXTRA_CHILD_RATE = [0, 300, 500, 500, 500, 500, 500];
-const PARENT_80_RATE = [0, 1000, 2000, 4000, 4000, 4000, 4000];
-
-function extraChildRate(option) { return EXTRA_CHILD_RATE[option] || 0; }
-function parent80Rate(option) { return PARENT_80_RATE[option] || 0; }
 
 function fmtKES(amount) {
   return `KES ${Number(amount || 0).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`;
@@ -50,6 +37,11 @@ async function downloadPdf(id, invoiceNumber) {
 
 export default function TeamLeaderInvoice() {
   const queryClient = useQueryClient();
+  const [company, setCompany] = useState('mlc');
+  const brand = getInvoiceCompany(company);
+  const COVER_PLANS = brand.plans;
+  const extraChildRate = (option) => brand.extraChildRates[option] || 0;
+  const parent80Rate = (option) => brand.parent80Rates[option] || 0;
   const [mode, setMode] = useState('single');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(null);
@@ -146,8 +138,20 @@ export default function TeamLeaderInvoice() {
     setRows([emptyRow()]); setGroupName(''); setBatchDueDate('');
   }
 
+  function switchCompany(key) {
+    if (key === company) return;
+    if (editingDraft) clearEditingDraft();
+    const plans = getInvoiceCompany(key).plans;
+    const valid = (opt) => plans.some((p) => p.option === parseInt(opt));
+    setCompany(key);
+    setGroupResult(null);
+    setForm((f) => ({ ...f, cover_option: valid(f.cover_option) ? f.cover_option : '' }));
+    setRows((rs) => rs.map((r) => (valid(r.cover_option) ? r : { ...r, cover_option: '3' })));
+  }
+
   function startEditDraft(inv) {
     setEditingDraft(inv);
+    setCompany(inv.company || 'mlc');
     setGroupResult(null);
     if (inv.group_members) {
       setMode('batch');
@@ -209,6 +213,7 @@ export default function TeamLeaderInvoice() {
       extra_children: parseInt(form.extra_children) || 0,
       parents_above_80: parseInt(form.parents_above_80) || 0,
       due_date: form.due_date || undefined,
+      company,
       _action: action,
     };
     if (editingDraft) {
@@ -227,6 +232,7 @@ export default function TeamLeaderInvoice() {
       total_amount: amt,
       notes: companyForm.notes || undefined,
       due_date: companyForm.due_date || undefined,
+      company,
       _action: action,
     };
     if (editingDraft) {
@@ -266,7 +272,7 @@ export default function TeamLeaderInvoice() {
         _action: action,
       });
     } else {
-      groupMutation.mutate({ group_name: groupName.trim() || undefined, members, due_date: batchDueDate || undefined, _action: action });
+      groupMutation.mutate({ group_name: groupName.trim() || undefined, members, due_date: batchDueDate || undefined, company, _action: action });
     }
   }
 
@@ -304,6 +310,8 @@ export default function TeamLeaderInvoice() {
             </button>
           </div>
         </div>
+
+        <InvoiceCompanyTabs value={company} onChange={switchCompany} />
 
         {/* Editing draft banner */}
         {editingDraft && (
@@ -351,7 +359,7 @@ export default function TeamLeaderInvoice() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Cover Option / Plan <span className="text-red-500">*</span></label>
                   <select value={form.cover_option} onChange={(e) => setForm((f) => ({ ...f, cover_option: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold bg-white">
                     <option value="">Select a plan</option>
-                    {COVER_PLANS.map((p) => <option key={p.option} value={p.option}>{p.name} · Cover {p.cover}</option>)}
+                    {COVER_PLANS.map((p) => <option key={p.option} value={p.option}>{p.name} · {brand.coverLabel} {p.cover}</option>)}
                   </select>
                 </div>
 
@@ -408,10 +416,9 @@ export default function TeamLeaderInvoice() {
               </form>
             </div>
 
-            <div className="bg-brand-navy rounded-xl p-6 text-white flex flex-col justify-between">
+            <div className={`${previewPanelBg(company)} rounded-xl p-6 text-white flex flex-col justify-between`}>
               <div>
-                <p className="text-brand-gold font-heading font-bold text-base mb-1">My Life Companion Welfare</p>
-                <p className="text-xs text-gray-400 mb-5">Underwritten by Old Mutual</p>
+                <InvoicePreviewBrand company={company} />
                 <div className="bg-white/10 rounded-lg p-3 mb-4">
                   <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Billed To</p>
                   <p className="font-semibold">{form.client_name || '—'}</p>
@@ -419,7 +426,7 @@ export default function TeamLeaderInvoice() {
                 {selectedPlan ? (
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between"><span className="text-gray-300">Annual Premium</span><span>{fmtKES(planAmount)}</span></div>
-                    <div className="flex justify-between"><span className="text-gray-300">Cover</span><span className="text-green-400">{selectedPlan.cover}</span></div>
+                    <div className="flex justify-between"><span className="text-gray-300">{brand.coverLabel}</span><span className="text-green-400">{selectedPlan.cover}</span></div>
                     <div className="flex justify-between"><span className="text-gray-300">Joining Fee</span><span>{fmtKES(200)}</span></div>
                     {extraChildPremium > 0 && (
                       <div className="flex justify-between"><span className="text-amber-300">Extra Children ({form.extra_children})</span><span>{fmtKES(extraChildPremium)}</span></div>
@@ -429,6 +436,7 @@ export default function TeamLeaderInvoice() {
                     )}
                   </div>
                 ) : <p className="text-gray-500 text-sm">Select a plan to preview totals</p>}
+                {selectedPlan && <InvoicePlanBenefits plan={selectedPlan} />}
               </div>
               <div>
                 <div className="border-t border-white/20 pt-4 mt-4 flex justify-between items-center">
@@ -481,10 +489,9 @@ export default function TeamLeaderInvoice() {
               </form>
             </div>
 
-            <div className="bg-brand-navy rounded-xl p-6 text-white flex flex-col justify-between">
+            <div className={`${previewPanelBg(company)} rounded-xl p-6 text-white flex flex-col justify-between`}>
               <div>
-                <p className="text-brand-gold font-heading font-bold text-base mb-1">My Life Companion Welfare</p>
-                <p className="text-xs text-gray-400 mb-5">Underwritten by Old Mutual</p>
+                <InvoicePreviewBrand company={company} />
                 <div className="bg-white/10 rounded-lg p-3 mb-4">
                   <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Billed To</p>
                   <p className="font-semibold">{companyForm.client_name || '—'}</p>
@@ -673,7 +680,9 @@ export default function TeamLeaderInvoice() {
                       <tbody className="divide-y divide-gray-50">
                         {myInvoices.map((inv) => (
                           <tr key={inv.id} className="hover:bg-gray-50">
-                            <td className="px-4 py-2.5 font-mono text-xs text-brand-navy font-semibold">{inv.invoice_number}</td>
+                            <td className="px-4 py-2.5 font-mono text-xs text-brand-navy font-semibold">{inv.invoice_number}
+                              <span className={`block mt-0.5 font-sans font-medium text-[10px] ${inv.company === 'francis' ? 'text-[#E8501E]' : 'text-gray-400'}`}>{getInvoiceCompany(inv.company).shortName}</span>
+                            </td>
                             <td className="px-4 py-2.5 text-gray-700">{inv.client_name}</td>
                             <td className="px-4 py-2.5 text-gray-500 hidden sm:table-cell">
                               {inv.group_members ? `Group (${inv.group_members.length})` : inv.cover_option ? `Opt ${inv.cover_option}` : 'General'}

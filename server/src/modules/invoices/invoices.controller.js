@@ -1,26 +1,19 @@
 const { pool } = require('../../config/db');
 const PDFDocument = require('pdfkit');
 
-const COVER_PLANS = [
-  { option: 1, name: 'Option 1', premium: 1500, cover: 'KES 50,000' },
-  { option: 2, name: 'Option 2', premium: 3000, cover: 'KES 100,000' },
-  { option: 3, name: 'Option 3', premium: 6000, cover: 'KES 200,000' },
-  { option: 4, name: 'Option 4', premium: 9000, cover: 'KES 300,000' },
-  { option: 5, name: 'Option 5', premium: 12000, cover: 'KES 400,000' },
-  { option: 6, name: 'Option 6', premium: 15000, cover: 'KES 500,000' },
-];
+const { getCompany, isValidCompany } = require('./companies');
 
-// Additional child premium per child beyond the included 4
-const EXTRA_CHILD_PREMIUM = [0, 300, 500, 500, 500, 500, 500]; // indexed by option 1-6
+function findPlan(company, option) { return getCompany(company).plans.find((p) => p.option === option); }
+function extraChildRate(company, option) { return getCompany(company).extraChildRates[option] || 0; }
+function parent80Rate(company, option) { return getCompany(company).parent80Rates[option] || 0; }
+function maxOption(company) { return getCompany(company).plans.length; }
 
-// Premium per parent/parent-in-law above 80 years
-const PARENT_ABOVE_80_PREMIUM = [0, 1000, 2000, 4000, 4000, 4000, 4000]; // indexed by option 1-6
+// Resolves the company for a new invoice; returns null if an invalid value was sent
+function resolveCompany(value) {
+  if (value === undefined || value === null || value === '') return 'mlc';
+  return isValidCompany(value) ? value : null;
+}
 
-function extraChildRate(option) { return EXTRA_CHILD_PREMIUM[option] || 0; }
-function parent80Rate(option) { return PARENT_ABOVE_80_PREMIUM[option] || 0; }
-
-const NAVY = '#1A2B4A';
-const GOLD = '#F5A623';
 const GREEN = '#27AE60';
 const LIGHT_GRAY = '#F5F5F5';
 
@@ -28,10 +21,10 @@ function fmtKES(amount) {
   return `KES ${Number(amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`;
 }
 
-async function generateInvoiceNumber(client) {
+async function generateInvoiceNumber(client, company = 'mlc') {
   const today = new Date();
   const datePart = today.toISOString().slice(0, 10).replace(/-/g, '');
-  const prefix = `INV-${datePart}-`;
+  const prefix = `${getCompany(company).prefix}-${datePart}-`;
   const result = await client.query(
     `SELECT COUNT(*) FROM invoices WHERE invoice_number LIKE $1`,
     [`${prefix}%`]
@@ -45,11 +38,15 @@ async function createInvoice(req, res, next) {
     const {
       client_name, cover_option, plan_amount, membership_fee,
       notes, member_id, due_date, extra_children, parents_above_80,
-      total_amount: directTotal,
+      total_amount: directTotal, company: companyInput,
     } = req.body;
 
     if (!client_name) {
       return res.status(400).json({ success: false, error: 'client_name is required' });
+    }
+    const company = resolveCompany(companyInput);
+    if (!company) {
+      return res.status(400).json({ success: false, error: 'Invalid company' });
     }
 
     const isGeneral = !cover_option;
@@ -63,35 +60,35 @@ async function createInvoice(req, res, next) {
       total = t;
     } else {
       optNum = parseInt(cover_option);
-      const plan = COVER_PLANS.find((p) => p.option === optNum);
+      const plan = findPlan(company, optNum);
       if (!plan) {
-        return res.status(400).json({ success: false, error: 'Invalid cover_option (must be 1–6)' });
+        return res.status(400).json({ success: false, error: `Invalid cover_option (must be 1–${maxOption(company)})` });
       }
       planAmt = plan_amount !== undefined ? parseFloat(plan_amount) : plan.premium;
       memberFee = membership_fee !== undefined ? parseFloat(membership_fee) : 200;
       extraChildCount = Math.max(0, parseInt(extra_children) || 0);
       parent80Count = Math.max(0, parseInt(parents_above_80) || 0);
-      extraChildPremium = extraChildRate(optNum) * extraChildCount;
-      parent80Premium = parent80Rate(optNum) * parent80Count;
+      extraChildPremium = extraChildRate(company, optNum) * extraChildCount;
+      parent80Premium = parent80Rate(company, optNum) * parent80Count;
       total = planAmt + memberFee + extraChildPremium + parent80Premium;
     }
 
     const dbClient = await pool.connect();
     try {
-      const invoiceNumber = await generateInvoiceNumber(dbClient);
+      const invoiceNumber = await generateInvoiceNumber(dbClient, company);
 
       const result = await dbClient.query(
         `INSERT INTO invoices
           (invoice_number, created_by, member_id, client_name, cover_option, plan_amount, membership_fee,
            extra_children, parents_above_80, extra_children_premium, parents_above_80_premium,
-           total_amount, notes, due_date)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+           total_amount, notes, due_date, company)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
          RETURNING *`,
         [
           invoiceNumber, req.user.id, member_id || null,
           client_name.trim(), optNum, planAmt, memberFee,
           extraChildCount, parent80Count, extraChildPremium, parent80Premium,
-          total, notes || null, due_date || null,
+          total, notes || null, due_date || null, company,
         ]
       );
 
@@ -117,6 +114,7 @@ async function updateInvoice(req, res, next) {
     const existing = check.rows[0];
     if (!isAdmin && existing.created_by !== req.user.id) return res.status(403).json({ success: false, error: 'Access denied' });
     if (existing.status !== 'draft') return res.status(400).json({ success: false, error: 'Only draft invoices can be edited' });
+    const company = existing.company || 'mlc';
 
     const {
       client_name, cover_option, plan_amount, membership_fee,
@@ -133,12 +131,12 @@ async function updateInvoice(req, res, next) {
         const { client_name: cn, cover_option: co, extra_children: ec, parents_above_80: p80 } = groupMembersInput[i];
         if (!cn || !co) return res.status(400).json({ success: false, error: `Member ${i + 1}: client_name and cover_option are required` });
         const optNum = parseInt(co);
-        const plan = COVER_PLANS.find((p) => p.option === optNum);
+        const plan = findPlan(company, optNum);
         if (!plan) return res.status(400).json({ success: false, error: `Member ${i + 1}: invalid cover_option` });
         const extraChildCount = Math.max(0, parseInt(ec) || 0);
         const parent80Count = Math.max(0, parseInt(p80) || 0);
-        const ecp = extraChildRate(optNum) * extraChildCount;
-        const p80p = parent80Rate(optNum) * parent80Count;
+        const ecp = extraChildRate(company, optNum) * extraChildCount;
+        const p80p = parent80Rate(company, optNum) * parent80Count;
         resolvedMembers.push({
           client_name: cn.trim(), cover_option: optNum, plan_name: plan.name, plan_amount: plan.premium,
           membership_fee: 200, cover: plan.cover, extra_children: extraChildCount, parents_above_80: parent80Count,
@@ -169,14 +167,14 @@ async function updateInvoice(req, res, next) {
     } else {
       // Standard plan invoice update
       const optNum = parseInt(cover_option);
-      const plan = COVER_PLANS.find((p) => p.option === optNum);
-      if (!plan) return res.status(400).json({ success: false, error: 'Invalid cover_option (must be 1–6)' });
+      const plan = findPlan(company, optNum);
+      if (!plan) return res.status(400).json({ success: false, error: `Invalid cover_option (must be 1–${maxOption(company)})` });
       const planAmt = plan_amount !== undefined ? parseFloat(plan_amount) : plan.premium;
       const memberFee = membership_fee !== undefined ? parseFloat(membership_fee) : 200;
       const extraChildCount = Math.max(0, parseInt(extra_children) || 0);
       const parent80Count = Math.max(0, parseInt(parents_above_80) || 0);
-      const ecp = extraChildRate(optNum) * extraChildCount;
-      const p80p = parent80Rate(optNum) * parent80Count;
+      const ecp = extraChildRate(company, optNum) * extraChildCount;
+      const p80p = parent80Rate(company, optNum) * parent80Count;
       fields = {
         client_name: client_name?.trim(), cover_option: optNum, plan_amount: planAmt, membership_fee: memberFee,
         extra_children: extraChildCount, parents_above_80: parent80Count, extra_children_premium: ecp, parents_above_80_premium: p80p,
@@ -210,7 +208,7 @@ async function updateInvoice(req, res, next) {
 
 async function listInvoices(req, res, next) {
   try {
-    const { status, page = 1, limit = 20 } = req.query;
+    const { status, company, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
     const role = req.user.role;
     const isAdmin = role === 'admin' || role === 'super_admin';
@@ -227,6 +225,11 @@ async function listInvoices(req, res, next) {
     if (status) {
       conditions.push(`i.status = $${idx++}`);
       params.push(status);
+    }
+
+    if (company && isValidCompany(company)) {
+      conditions.push(`i.company = $${idx++}`);
+      params.push(company);
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -320,6 +323,11 @@ async function generatePdf(req, res, next) {
       return res.status(403).json({ success: false, error: 'Access denied' });
     }
 
+    const brand = getCompany(inv.company);
+    const isFrancis = brand.key === 'francis';
+    const NAVY = brand.primary;
+    const GOLD = brand.accent;
+
     const doc = new PDFDocument({ margin: 0, size: 'A4', bufferPages: true });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="invoice-${inv.invoice_number}.pdf"`);
@@ -337,10 +345,7 @@ async function generatePdf(req, res, next) {
       const fy = PH - FOOTER_H;
       doc.rect(0, fy, PW, FOOTER_H).fill(NAVY);
       doc.fontSize(7.5).font('Helvetica').fillColor('#AAAAAA')
-        .text(
-          'My Life Companion Welfare  ·  info@mylife-companion.com  ·  +254-118-043-715  ·  Underwritten by Old Mutual',
-          0, fy + 14, { width: PW, align: 'center' }
-        );
+        .text(brand.footer, 0, fy + 14, { width: PW, align: 'center' });
     }
 
     // ── Add a new continuation page and return y after compact header ────────
@@ -350,7 +355,7 @@ async function generatePdf(req, res, next) {
       doc.rect(0, 0, PW, 52).fill(NAVY);
       doc.rect(0, 0, PW, 52).stroke(NAVY);
       doc.fontSize(13).font('Helvetica-Bold').fillColor(GOLD)
-        .text('My Life Companion Welfare', M, 12, { width: CW - 130 });
+        .text(brand.name, M, 12, { width: CW - 130 });
       doc.fontSize(8).font('Helvetica').fillColor('#CCCCCC')
         .text(`Invoice ${inv.invoice_number} — continued`, M, 29);
       doc.rect(PW - M - 100, 10, 100, 32).fill(GOLD);
@@ -366,9 +371,44 @@ async function generatePdf(req, res, next) {
         .text('#', M + 4, y + 8, { width: 20, align: 'right' })
         .text('MEMBER NAME', colMember, y + 8, { width: colPlan - colMember - 4 })
         .text('PLAN', colPlan, y + 8, { width: colCover - colPlan - 4 })
-        .text('COVER', colCover, y + 8, { width: colAmt - colCover - 4 })
-        .text('AMOUNT (KES)', colAmt, y + 8, { width: 110, align: 'right' });
+        .text(brand.coverHeader, colCover, y + 8, { width: colAmt - colCover - 4 })
+        .text('AMOUNT (KES)', colAmt, y + 8, { width: CW - (colAmt - M) - 4, align: 'right' });
       return y + 26;
+    }
+
+    // ── Draw Francis Funeral plan benefits block, return y after it ─────────
+    function drawBenefitsBlock(y, plan) {
+      const labelW = 110;
+      const valueX = M + 16 + labelW;
+      const valueW = CW - 32 - labelW;
+      const rows = [
+        ['Hearse', plan.hearse],
+        ['Casket', plan.casket],
+        ['Additional features', plan.features],
+        ['Cash (token at morgue)', plan.cover],
+        ['Cover for', brand.coverFor],
+      ];
+      doc.fontSize(8.5).font('Helvetica');
+      const rowHeights = rows.map(([, v]) => Math.max(11, doc.heightOfString(v, { width: valueW })) + 2);
+      const BH = 26 + rowHeights.reduce((a, b) => a + b, 0) + 14;
+
+      if (y + BH > PAGE_BOTTOM) y = addContinuationPage() + 10;
+
+      doc.rect(M, y, CW, BH).fill('#FFF6F1');
+      doc.rect(M, y, 4, BH).fill(GOLD);
+      doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
+        .text(`WHAT'S INCLUDED — ${plan.name.toUpperCase()}`, M + 16, y + 9);
+
+      let ry = y + 25;
+      rows.forEach(([label, value], i) => {
+        doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#555555').text(label, M + 16, ry, { width: labelW - 6 });
+        doc.fontSize(8.5).font('Helvetica').fillColor(NAVY).text(value, valueX, ry, { width: valueW });
+        ry += rowHeights[i];
+      });
+      doc.fontSize(7).font('Helvetica-Oblique').fillColor('#888888')
+        .text(`Mandatory documents: ${brand.mandatoryDocs}`, M + 16, ry + 1, { width: CW - 32 });
+
+      return y + BH;
     }
 
     // ── Draw payment instructions block, return y after it ───────────────────
@@ -413,16 +453,31 @@ async function generatePdf(req, res, next) {
     // =========================================================================
     // ── PAGE 1: Full header band ─────────────────────────────────────────────
     // =========================================================================
-    doc.rect(0, 0, PW, 120).fill(NAVY);
-    doc.fontSize(22).font('Helvetica-Bold').fillColor(GOLD)
-      .text('My Life Companion Welfare', M, 28, { width: CW - 140 });
-    doc.fontSize(8.5).font('Helvetica').fillColor('#CCCCCC')
-      .text('Development House, Floor 13, Suite 18, Nairobi', M, 57)
-      .text('+254-118-043-715  |  info@mylife-companion.com', M, 69)
-      .text('Underwritten by Old Mutual', M, 81);
-    doc.rect(PW - M - 130, 22, 130, 80).fill(GOLD);
-    doc.fontSize(20).font('Helvetica-Bold').fillColor(NAVY)
-      .text('INVOICE', PW - M - 130, 32, { width: 130, align: 'center' });
+    if (isFrancis) {
+      // Letterhead style: logo on white with an accent rule beneath
+      doc.rect(0, 0, PW, 120).fill('#FFFFFF');
+      doc.image(brand.logo, M, 14, { fit: [150, 93] });
+      const tx = M + 165;
+      doc.fontSize(18).font('Helvetica-Bold').fillColor(NAVY)
+        .text(brand.name, tx, 30, { width: CW - 165 - 140 });
+      doc.fontSize(8.5).font('Helvetica').fillColor('#555555');
+      brand.headerLines.forEach((line, i) => doc.text(line, tx, 55 + i * 12, { width: CW - 165 - 140 }));
+      doc.rect(0, 114, PW, 6).fill(GOLD);
+      doc.rect(PW - M - 130, 22, 130, 80).fill(NAVY);
+      doc.fontSize(20).font('Helvetica-Bold').fillColor('#FFFFFF')
+        .text('INVOICE', PW - M - 130, 32, { width: 130, align: 'center' });
+      doc.fontSize(7.5).font('Helvetica').fillColor('#DDDDDD')
+        .text('FUNERAL LAST EXPENSE COVER', PW - M - 125, 64, { width: 120, align: 'center' });
+    } else {
+      doc.rect(0, 0, PW, 120).fill(NAVY);
+      doc.fontSize(22).font('Helvetica-Bold').fillColor(GOLD)
+        .text(brand.name, M, 28, { width: CW - 140 });
+      doc.fontSize(8.5).font('Helvetica').fillColor('#CCCCCC');
+      brand.headerLines.forEach((line, i) => doc.text(line, M, 57 + i * 12));
+      doc.rect(PW - M - 130, 22, 130, 80).fill(GOLD);
+      doc.fontSize(20).font('Helvetica-Bold').fillColor(NAVY)
+        .text('INVOICE', PW - M - 130, 32, { width: 130, align: 'center' });
+    }
 
     // ── Meta strip ──────────────────────────────────────────────────────────
     let y = 140;
@@ -476,11 +531,9 @@ async function generatePdf(req, res, next) {
     doc.fontSize(8).font('Helvetica-Bold').fillColor(GOLD).text('ISSUED BY', rightX, y);
     doc.moveTo(rightX, y + 13).lineTo(rightX + colW, y + 13).stroke(GOLD);
     doc.fontSize(12).font('Helvetica-Bold').fillColor(NAVY)
-      .text('My Life Companion Welfare', rightX, y + 18, { width: colW });
-    doc.fontSize(8.5).font('Helvetica').fillColor('#555555')
-      .text('Development House, Floor 13, Suite 18', rightX, y + 36, { width: colW })
-      .text('+254-118-043-715  |  info@mylife-companion.com', rightX, y + 48, { width: colW })
-      .text('Underwritten by Old Mutual', rightX, y + 60, { width: colW });
+      .text(brand.name, rightX, y + 18, { width: colW });
+    doc.fontSize(8.5).font('Helvetica').fillColor('#555555');
+    brand.issuedByLines.forEach((line, i) => doc.text(line, rightX, y + 36 + i * 12, { width: colW }));
 
     y = 330;
 
@@ -603,12 +656,12 @@ async function generatePdf(req, res, next) {
 
     } else {
       // ── SINGLE invoice: line items ────────────────────────────────────────
-      const plan = COVER_PLANS.find((p) => p.option === inv.cover_option);
+      const plan = findPlan(brand.key, inv.cover_option);
 
       doc.rect(M, y, CW, 26).fill(NAVY);
       doc.fontSize(9).font('Helvetica-Bold').fillColor('#FFFFFF')
         .text('DESCRIPTION', M + 12, y + 8)
-        .text('COVER', M + CW - 270, y + 8)
+        .text(brand.coverHeader, M + CW - 270, y + 8)
         .text('AMOUNT (KES)', M + CW - 130, y + 8);
       y += 26;
 
@@ -620,7 +673,7 @@ async function generatePdf(req, res, next) {
           doc.rect(M, y, CW, 26).fill(NAVY);
           doc.fontSize(9).font('Helvetica-Bold').fillColor('#FFFFFF')
             .text('DESCRIPTION', M + 12, y + 8)
-            .text('COVER', M + CW - 270, y + 8)
+            .text(brand.coverHeader, M + CW - 270, y + 8)
             .text('AMOUNT (KES)', M + CW - 130, y + 8);
           y += 26;
           rowShade = false;
@@ -642,14 +695,14 @@ async function generatePdf(req, res, next) {
       }
 
       const planLabel = plan ? `Annual Premium — Cover Option ${plan.option}` : 'Annual Premium';
-      tableRow(planLabel, 'Extended family cover (annual)', plan ? plan.cover : '', fmtKES(inv.plan_amount));
+      tableRow(planLabel, brand.planDescription, plan ? plan.cover : '', fmtKES(inv.plan_amount));
       tableRow('Membership / Joining Fee', 'One-time registration fee', '', fmtKES(inv.membership_fee));
 
       const extraChildren = parseInt(inv.extra_children) || 0;
       const parents80 = parseInt(inv.parents_above_80) || 0;
 
       if (extraChildren > 0) {
-        const rate = extraChildRate(inv.cover_option);
+        const rate = extraChildRate(brand.key, inv.cover_option);
         tableRow(
           `Additional Children (${extraChildren})`,
           `${extraChildren} child${extraChildren > 1 ? 'ren' : ''} beyond the included 4 — KES ${rate.toLocaleString('en-KE')} per child`,
@@ -659,7 +712,7 @@ async function generatePdf(req, res, next) {
       }
 
       if (parents80 > 0) {
-        const rate = parent80Rate(inv.cover_option);
+        const rate = parent80Rate(brand.key, inv.cover_option);
         tableRow(
           `Parents / Parents-in-law above 80 (${parents80})`,
           `${parents80} person${parents80 > 1 ? 's' : ''} above 80 years — KES ${rate.toLocaleString('en-KE')} per person`,
@@ -679,6 +732,8 @@ async function generatePdf(req, res, next) {
         .text('TOTAL', M + 12, y + 11)
         .text(fmtKES(inv.total_amount), M + CW - 130, y + 11, { width: 120, align: 'right' });
       y += 36;
+
+      if (isFrancis && plan) y = drawBenefitsBlock(y + 10, plan);
     }
 
     // ── Payment instructions (shared) ────────────────────────────────────────
@@ -713,7 +768,11 @@ async function generatePdf(req, res, next) {
 
 async function createGroupInvoice(req, res, next) {
   try {
-    const { group_name, members, notes, due_date } = req.body;
+    const { group_name, members, notes, due_date, company: companyInput } = req.body;
+    const company = resolveCompany(companyInput);
+    if (!company) {
+      return res.status(400).json({ success: false, error: 'Invalid company' });
+    }
 
     if (!Array.isArray(members) || members.length === 0) {
       return res.status(400).json({ success: false, error: 'members array is required and must not be empty' });
@@ -729,15 +788,15 @@ async function createGroupInvoice(req, res, next) {
         return res.status(400).json({ success: false, error: `Member ${i + 1}: client_name and cover_option are required` });
       }
       const optNum = parseInt(cover_option);
-      const plan = COVER_PLANS.find((p) => p.option === optNum);
+      const plan = findPlan(company, optNum);
       if (!plan) {
-        return res.status(400).json({ success: false, error: `Member ${i + 1}: invalid cover_option ${cover_option} (must be 1–6)` });
+        return res.status(400).json({ success: false, error: `Member ${i + 1}: invalid cover_option ${cover_option} (must be 1–${maxOption(company)})` });
       }
 
       const extraChildCount = Math.max(0, parseInt(extra_children) || 0);
       const parent80Count = Math.max(0, parseInt(parents_above_80) || 0);
-      const extraChildPremium = extraChildRate(optNum) * extraChildCount;
-      const parent80Premium = parent80Rate(optNum) * parent80Count;
+      const extraChildPremium = extraChildRate(company, optNum) * extraChildCount;
+      const parent80Premium = parent80Rate(company, optNum) * parent80Count;
 
       resolvedMembers.push({
         client_name: client_name.trim(),
@@ -771,13 +830,13 @@ async function createGroupInvoice(req, res, next) {
 
     const dbClient = await pool.connect();
     try {
-      const invoiceNumber = await generateInvoiceNumber(dbClient);
+      const invoiceNumber = await generateInvoiceNumber(dbClient, company);
       const result = await dbClient.query(
         `INSERT INTO invoices
-          (invoice_number, created_by, client_name, plan_amount, membership_fee, total_amount, notes, group_members, due_date)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+          (invoice_number, created_by, client_name, plan_amount, membership_fee, total_amount, notes, group_members, due_date, company)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          RETURNING *`,
-        [invoiceNumber, req.user.id, invoiceName, totalPremiums, totalFees, grandTotal, notes || null, JSON.stringify(resolvedMembers), due_date || null]
+        [invoiceNumber, req.user.id, invoiceName, totalPremiums, totalFees, grandTotal, notes || null, JSON.stringify(resolvedMembers), due_date || null, company]
       );
       return res.status(201).json({ success: true, data: result.rows[0] });
     } finally {
@@ -814,7 +873,11 @@ async function updateStatus(req, res, next) {
 
 async function bulkCreateInvoices(req, res, next) {
   try {
-    const { invoices } = req.body;
+    const { invoices, company: companyInput } = req.body;
+    const company = resolveCompany(companyInput);
+    if (!company) {
+      return res.status(400).json({ success: false, error: 'Invalid company' });
+    }
 
     if (!Array.isArray(invoices) || invoices.length === 0) {
       return res.status(400).json({ success: false, error: 'invoices array is required and must not be empty' });
@@ -837,9 +900,9 @@ async function bulkCreateInvoices(req, res, next) {
         }
 
         const optNum = parseInt(cover_option);
-        const plan = COVER_PLANS.find((p) => p.option === optNum);
+        const plan = findPlan(company, optNum);
         if (!plan) {
-          failed.push({ index: i, client_name, reason: `Invalid cover_option ${cover_option} (must be 1–6)` });
+          failed.push({ index: i, client_name, reason: `Invalid cover_option ${cover_option} (must be 1–${maxOption(company)})` });
           continue;
         }
 
@@ -848,19 +911,19 @@ async function bulkCreateInvoices(req, res, next) {
           const memberFee = membership_fee !== undefined ? parseFloat(membership_fee) : 200;
           const extraChildCount = Math.max(0, parseInt(extra_children) || 0);
           const parent80Count = Math.max(0, parseInt(parents_above_80) || 0);
-          const extraChildPremium = extraChildRate(optNum) * extraChildCount;
-          const parent80Premium = parent80Rate(optNum) * parent80Count;
+          const extraChildPremium = extraChildRate(company, optNum) * extraChildCount;
+          const parent80Premium = parent80Rate(company, optNum) * parent80Count;
           const total = planAmt + memberFee + extraChildPremium + parent80Premium;
-          const invoiceNumber = await generateInvoiceNumber(dbClient);
+          const invoiceNumber = await generateInvoiceNumber(dbClient, company);
 
           const result = await dbClient.query(
             `INSERT INTO invoices
               (invoice_number, created_by, member_id, client_name, cover_option, plan_amount, membership_fee,
-               extra_children, parents_above_80, extra_children_premium, parents_above_80_premium, total_amount, notes)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+               extra_children, parents_above_80, extra_children_premium, parents_above_80_premium, total_amount, notes, company)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
              RETURNING *`,
             [invoiceNumber, req.user.id, member_id || null, client_name.trim(), optNum, planAmt, memberFee,
-             extraChildCount, parent80Count, extraChildPremium, parent80Premium, total, notes || null]
+             extraChildCount, parent80Count, extraChildPremium, parent80Premium, total, notes || null, company]
           );
 
           created.push(result.rows[0]);
