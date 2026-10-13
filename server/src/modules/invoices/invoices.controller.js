@@ -2,6 +2,7 @@ const { pool } = require('../../config/db');
 const PDFDocument = require('pdfkit');
 
 const { getCompany, isValidCompany } = require('./companies');
+const { drawPoliciesForInvoice, hasPolicy } = require('./policy.pdf');
 
 function findPlan(company, option) { return getCompany(company).plans.find((p) => p.option === option); }
 function extraChildRate(company, option) { return getCompany(company).extraChildRates[option] || 0; }
@@ -12,6 +13,42 @@ function maxOption(company) { return getCompany(company).plans.length; }
 function resolveCompany(value) {
   if (value === undefined || value === null || value === '') return 'mlc';
   return isValidCompany(value) ? value : null;
+}
+
+const MAX_DEPENDANTS = 13;
+
+async function nextPolicyNumber(db) {
+  const { rows } = await db.query(`SELECT nextval('francis_policy_seq') AS n`);
+  return `FFH-POL-${new Date().getFullYear()}-${String(rows[0].n).padStart(5, '0')}`;
+}
+
+// Normalise dependants input into [{ name, relationship, dob, id_number }] (rows without a name are dropped)
+function sanitizeDependants(input) {
+  if (!Array.isArray(input)) return [];
+  const clean = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+  return input
+    .map((d) => ({
+      name: clean(d?.name, 120),
+      relationship: clean(d?.relationship, 40),
+      dob: clean(d?.dob, 10),
+      id_number: clean(d?.id_number, 40),
+    }))
+    .filter((d) => d.name)
+    .slice(0, MAX_DEPENDANTS);
+}
+
+function cleanPolicyNumber(v) {
+  return typeof v === 'string' && v.trim() ? v.trim().slice(0, 50) : null;
+}
+
+// Give each Francis group member a policy number, reusing numbers from a previous version of the invoice
+async function assignMemberPolicyNumbers(db, members, previous = []) {
+  const unused = previous.filter((m) => m.policy_number);
+  for (const m of members) {
+    const idx = unused.findIndex((p) => p.client_name === m.client_name);
+    if (idx >= 0) { m.policy_number = unused[idx].policy_number; unused.splice(idx, 1); }
+    else m.policy_number = await nextPolicyNumber(db);
+  }
 }
 
 const GREEN = '#27AE60';
@@ -38,7 +75,7 @@ async function createInvoice(req, res, next) {
     const {
       client_name, cover_option, plan_amount, membership_fee,
       notes, member_id, due_date, extra_children, parents_above_80,
-      total_amount: directTotal, company: companyInput,
+      total_amount: directTotal, company: companyInput, policy_number, dependants,
     } = req.body;
 
     if (!client_name) {
@@ -76,19 +113,22 @@ async function createInvoice(req, res, next) {
     const dbClient = await pool.connect();
     try {
       const invoiceNumber = await generateInvoiceNumber(dbClient, company);
+      const withPolicy = company === 'francis' && !isGeneral;
+      const policyNumber = withPolicy ? (cleanPolicyNumber(policy_number) || await nextPolicyNumber(dbClient)) : null;
+      const dependantsJson = withPolicy ? JSON.stringify(sanitizeDependants(dependants)) : null;
 
       const result = await dbClient.query(
         `INSERT INTO invoices
           (invoice_number, created_by, member_id, client_name, cover_option, plan_amount, membership_fee,
            extra_children, parents_above_80, extra_children_premium, parents_above_80_premium,
-           total_amount, notes, due_date, company)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+           total_amount, notes, due_date, company, policy_number, dependants)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
          RETURNING *`,
         [
           invoiceNumber, req.user.id, member_id || null,
           client_name.trim(), optNum, planAmt, memberFee,
           extraChildCount, parent80Count, extraChildPremium, parent80Premium,
-          total, notes || null, due_date || null, company,
+          total, notes || null, due_date || null, company, policyNumber, dependantsJson,
         ]
       );
 
@@ -119,7 +159,7 @@ async function updateInvoice(req, res, next) {
     const {
       client_name, cover_option, plan_amount, membership_fee,
       notes, member_id, due_date, extra_children, parents_above_80,
-      total_amount: directTotal, members: groupMembersInput, group_name,
+      total_amount: directTotal, members: groupMembersInput, group_name, policy_number, dependants,
     } = req.body;
 
     let fields;
@@ -144,6 +184,9 @@ async function updateInvoice(req, res, next) {
           total: plan.premium + 200 + ecp + p80p,
         });
       }
+      if (company === 'francis') {
+        await assignMemberPolicyNumbers(pool, resolvedMembers, Array.isArray(existing.group_members) ? existing.group_members : []);
+      }
       const totalPremiums = resolvedMembers.reduce((s, m) => s + m.plan_amount + m.extra_children_premium + m.parents_above_80_premium, 0);
       const totalFees = resolvedMembers.reduce((s, m) => s + m.membership_fee, 0);
       let invoiceName = group_name?.trim() || existing.client_name;
@@ -152,6 +195,7 @@ async function updateInvoice(req, res, next) {
         extra_children: 0, parents_above_80: 0, extra_children_premium: 0, parents_above_80_premium: 0,
         total_amount: totalPremiums + totalFees, notes: notes || null, due_date: due_date || null,
         member_id: null, group_members: JSON.stringify(resolvedMembers),
+        policy_number: null, dependants: null,
       };
     } else if (!cover_option) {
       // General invoice update
@@ -163,6 +207,7 @@ async function updateInvoice(req, res, next) {
         total_amount: t, notes: notes !== undefined ? (notes || null) : existing.notes,
         due_date: due_date !== undefined ? (due_date || null) : existing.due_date,
         member_id: null, group_members: null,
+        policy_number: null, dependants: null,
       };
     } else {
       // Standard plan invoice update
@@ -182,7 +227,14 @@ async function updateInvoice(req, res, next) {
         notes: notes !== undefined ? (notes || null) : existing.notes,
         due_date: due_date !== undefined ? (due_date || null) : existing.due_date,
         member_id: member_id || null, group_members: null,
+        policy_number: null, dependants: null,
       };
+      if (company === 'francis') {
+        fields.policy_number = cleanPolicyNumber(policy_number) || existing.policy_number || await nextPolicyNumber(pool);
+        fields.dependants = JSON.stringify(dependants !== undefined
+          ? sanitizeDependants(dependants)
+          : (Array.isArray(existing.dependants) ? existing.dependants : []));
+      }
     }
 
     const result = await pool.query(
@@ -190,12 +242,13 @@ async function updateInvoice(req, res, next) {
         client_name=$1, cover_option=$2, plan_amount=$3, membership_fee=$4,
         extra_children=$5, parents_above_80=$6, extra_children_premium=$7, parents_above_80_premium=$8,
         total_amount=$9, notes=$10, due_date=$11, member_id=$12, group_members=$13,
-        updated_at=NOW()
-       WHERE id=$14 RETURNING *`,
+        policy_number=$14, dependants=$15, updated_at=NOW()
+       WHERE id=$16 RETURNING *`,
       [
         fields.client_name, fields.cover_option, fields.plan_amount, fields.membership_fee,
         fields.extra_children, fields.parents_above_80, fields.extra_children_premium, fields.parents_above_80_premium,
         fields.total_amount, fields.notes, fields.due_date, fields.member_id, fields.group_members,
+        fields.policy_number, fields.dependants,
         id,
       ]
     );
@@ -299,142 +352,121 @@ async function getInvoice(req, res, next) {
   }
 }
 
-async function generatePdf(req, res, next) {
-  try {
-    const { id } = req.params;
-    const role = req.user.role;
-    const isAdmin = role === 'admin' || role === 'super_admin';
+// ── Render the invoice pages for `inv` into `doc`, starting on its current page ──
+function drawInvoice(doc, inv) {
+  const brand = getCompany(inv.company);
+  const isFrancis = brand.key === 'francis';
+  const NAVY = brand.primary;
+  const GOLD = brand.accent;
 
-    const result = await pool.query(
-      `SELECT i.*, u.full_name AS created_by_name, u.role AS created_by_role
-       FROM invoices i
-       JOIN users u ON u.id = i.created_by
-       WHERE i.id = $1`,
-      [id]
-    );
+  const startPage = doc.bufferedPageRange().count - 1;
 
-    if (!result.rows.length) {
-      return res.status(404).json({ success: false, error: 'Invoice not found' });
-    }
+  const PW = 595.28;
+  const PH = 841.89;
+  const M = 40;
+  const CW = PW - M * 2;
+  const FOOTER_H = 48;
+  const PAGE_BOTTOM = PH - FOOTER_H - 8;
 
-    const inv = result.rows[0];
+  // ── Draw footer band on the current page (no page number — added later) ──
+  function drawFooter() {
+    const fy = PH - FOOTER_H;
+    doc.rect(0, fy, PW, FOOTER_H).fill(NAVY);
+    doc.fontSize(7.5).font('Helvetica').fillColor('#AAAAAA')
+      .text(brand.footer, 0, fy + 14, { width: PW, align: 'center' });
+  }
 
-    if (!isAdmin && inv.created_by !== req.user.id) {
-      return res.status(403).json({ success: false, error: 'Access denied' });
-    }
+  // ── Add a new continuation page and return y after compact header ────────
+  function addContinuationPage() {
+    drawFooter();
+    doc.addPage({ margin: 0, size: 'A4' });
+    doc.rect(0, 0, PW, 52).fill(NAVY);
+    doc.rect(0, 0, PW, 52).stroke(NAVY);
+    doc.fontSize(13).font('Helvetica-Bold').fillColor(GOLD)
+      .text(brand.name, M, 12, { width: CW - 130 });
+    doc.fontSize(8).font('Helvetica').fillColor('#CCCCCC')
+      .text(`Invoice ${inv.invoice_number} — continued`, M, 29);
+    doc.rect(PW - M - 100, 10, 100, 32).fill(GOLD);
+    doc.fontSize(9).font('Helvetica-Bold').fillColor(NAVY)
+      .text('INVOICE', PW - M - 100, 17, { width: 100, align: 'center' });
+    return 62;
+  }
 
-    const brand = getCompany(inv.company);
-    const isFrancis = brand.key === 'francis';
-    const NAVY = brand.primary;
-    const GOLD = brand.accent;
+  // ── Draw group table header row, return y after it ──────────────────────
+  function drawGroupTableHeader(y, colMember, colPlan, colCover, colAmt) {
+    doc.rect(M, y, CW, 26).fill(NAVY);
+    doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#FFFFFF')
+      .text('#', M + 4, y + 8, { width: 20, align: 'right' })
+      .text('MEMBER NAME', colMember, y + 8, { width: colPlan - colMember - 4 })
+      .text('PLAN', colPlan, y + 8, { width: colCover - colPlan - 4 })
+      .text(brand.coverHeader, colCover, y + 8, { width: colAmt - colCover - 4 })
+      .text('AMOUNT (KES)', colAmt, y + 8, { width: CW - (colAmt - M) - 4, align: 'right' });
+    return y + 26;
+  }
 
-    const doc = new PDFDocument({ margin: 0, size: 'A4', bufferPages: true });
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="invoice-${inv.invoice_number}.pdf"`);
-    doc.pipe(res);
+  // ── Draw Francis Funeral plan benefits block, return y after it ─────────
+  function drawBenefitsBlock(y, plan) {
+    const labelW = 110;
+    const valueX = M + 16 + labelW;
+    const valueW = CW - 32 - labelW;
+    const rows = [
+      ['Hearse', plan.hearse],
+      ['Casket', plan.casket],
+      ['Additional features', plan.features],
+      ['Cash (token at morgue)', plan.cover],
+      ['Cover for', brand.coverFor],
+    ];
+    doc.fontSize(8.5).font('Helvetica');
+    const rowHeights = rows.map(([, v]) => Math.max(11, doc.heightOfString(v, { width: valueW })) + 2);
+    const BH = 26 + rowHeights.reduce((a, b) => a + b, 0) + 14;
 
-    const PW = 595.28;
-    const PH = 841.89;
-    const M = 40;
-    const CW = PW - M * 2;
-    const FOOTER_H = 48;
-    const PAGE_BOTTOM = PH - FOOTER_H - 8;
+    if (y + BH > PAGE_BOTTOM) y = addContinuationPage() + 10;
 
-    // ── Draw footer band on the current page (no page number — added later) ──
-    function drawFooter() {
-      const fy = PH - FOOTER_H;
-      doc.rect(0, fy, PW, FOOTER_H).fill(NAVY);
-      doc.fontSize(7.5).font('Helvetica').fillColor('#AAAAAA')
-        .text(brand.footer, 0, fy + 14, { width: PW, align: 'center' });
-    }
+    doc.rect(M, y, CW, BH).fill('#FFF6F1');
+    doc.rect(M, y, 4, BH).fill(GOLD);
+    doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
+      .text(`WHAT'S INCLUDED — ${plan.name.toUpperCase()}`, M + 16, y + 9);
 
-    // ── Add a new continuation page and return y after compact header ────────
-    function addContinuationPage() {
-      drawFooter();
-      doc.addPage({ margin: 0, size: 'A4' });
-      doc.rect(0, 0, PW, 52).fill(NAVY);
-      doc.rect(0, 0, PW, 52).stroke(NAVY);
-      doc.fontSize(13).font('Helvetica-Bold').fillColor(GOLD)
-        .text(brand.name, M, 12, { width: CW - 130 });
-      doc.fontSize(8).font('Helvetica').fillColor('#CCCCCC')
-        .text(`Invoice ${inv.invoice_number} — continued`, M, 29);
-      doc.rect(PW - M - 100, 10, 100, 32).fill(GOLD);
-      doc.fontSize(9).font('Helvetica-Bold').fillColor(NAVY)
-        .text('INVOICE', PW - M - 100, 17, { width: 100, align: 'center' });
-      return 62;
-    }
+    let ry = y + 25;
+    rows.forEach(([label, value], i) => {
+      doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#555555').text(label, M + 16, ry, { width: labelW - 6 });
+      doc.fontSize(8.5).font('Helvetica').fillColor(NAVY).text(value, valueX, ry, { width: valueW });
+      ry += rowHeights[i];
+    });
+    doc.fontSize(7).font('Helvetica-Oblique').fillColor('#888888')
+      .text(`Mandatory documents: ${brand.mandatoryDocs}`, M + 16, ry + 1, { width: CW - 32 });
 
-    // ── Draw group table header row, return y after it ──────────────────────
-    function drawGroupTableHeader(y, colMember, colPlan, colCover, colAmt) {
-      doc.rect(M, y, CW, 26).fill(NAVY);
-      doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#FFFFFF')
-        .text('#', M + 4, y + 8, { width: 20, align: 'right' })
-        .text('MEMBER NAME', colMember, y + 8, { width: colPlan - colMember - 4 })
-        .text('PLAN', colPlan, y + 8, { width: colCover - colPlan - 4 })
-        .text(brand.coverHeader, colCover, y + 8, { width: colAmt - colCover - 4 })
-        .text('AMOUNT (KES)', colAmt, y + 8, { width: CW - (colAmt - M) - 4, align: 'right' });
-      return y + 26;
-    }
+    return y + BH;
+  }
 
-    // ── Draw Francis Funeral plan benefits block, return y after it ─────────
-    function drawBenefitsBlock(y, plan) {
-      const labelW = 110;
-      const valueX = M + 16 + labelW;
-      const valueW = CW - 32 - labelW;
-      const rows = [
-        ['Hearse', plan.hearse],
-        ['Casket', plan.casket],
-        ['Additional features', plan.features],
-        ['Cash (token at morgue)', plan.cover],
-        ['Cover for', brand.coverFor],
-      ];
-      doc.fontSize(8.5).font('Helvetica');
-      const rowHeights = rows.map(([, v]) => Math.max(11, doc.heightOfString(v, { width: valueW })) + 2);
-      const BH = 26 + rowHeights.reduce((a, b) => a + b, 0) + 14;
+  // ── Draw payment instructions block, return y after it ───────────────────
+  function drawPaymentBlock(y) {
+    const BH = 100;
+    doc.rect(M, y, CW, BH).fill(LIGHT_GRAY);
+    doc.rect(M, y, 4, BH).fill(GOLD);
+    doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
+      .text('PAYMENT INSTRUCTIONS', M + 16, y + 10);
 
-      if (y + BH > PAGE_BOTTOM) y = addContinuationPage() + 10;
+    const half = Math.floor(CW / 2);
+    const rx   = M + half + 8;
+    const rv   = rx + 95;
 
-      doc.rect(M, y, CW, BH).fill('#FFF6F1');
-      doc.rect(M, y, 4, BH).fill(GOLD);
-      doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
-        .text(`WHAT'S INCLUDED — ${plan.name.toUpperCase()}`, M + 16, y + 9);
+    const pay = brand.payment;
 
-      let ry = y + 25;
-      rows.forEach(([label, value], i) => {
-        doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#555555').text(label, M + 16, ry, { width: labelW - 6 });
-        doc.fontSize(8.5).font('Helvetica').fillColor(NAVY).text(value, valueX, ry, { width: valueW });
-        ry += rowHeights[i];
-      });
-      doc.fontSize(7).font('Helvetica-Oblique').fillColor('#888888')
-        .text(`Mandatory documents: ${brand.mandatoryDocs}`, M + 16, ry + 1, { width: CW - 32 });
+    // Left column — M-Pesa
+    doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#555555')
+      .text('M-PESA PAYBILL', M + 16, y + 26);
+    doc.fontSize(9).font('Helvetica').fillColor('#444444')
+      .text('Paybill Number:', M + 16, y + 40)
+      .text('Account Number:', M + 16, y + 54)
+      .text(pay.accountName ? 'Account Name:' : 'Amount:', M + 16, y + 68);
+    const lv = pay.accountName ? M + 116 : M + 148;
+    doc.fontSize(9).font('Helvetica-Bold').fillColor(NAVY)
+      .text(pay.paybill, lv, y + 40)
+      .text(pay.account, lv, y + 54)
+      .text(pay.accountName || fmtKES(inv.total_amount), lv, y + 68, { width: M + half - lv });
 
-      return y + BH;
-    }
-
-    // ── Draw payment instructions block, return y after it ───────────────────
-    function drawPaymentBlock(y) {
-      const BH = 100;
-      doc.rect(M, y, CW, BH).fill(LIGHT_GRAY);
-      doc.rect(M, y, 4, BH).fill(GOLD);
-      doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
-        .text('PAYMENT INSTRUCTIONS', M + 16, y + 10);
-
-      const half = Math.floor(CW / 2);
-      const rx   = M + half + 8;
-      const rv   = rx + 95;
-
-      // Left column — M-Pesa
-      doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#555555')
-        .text('M-PESA PAYBILL', M + 16, y + 26);
-      doc.fontSize(9).font('Helvetica').fillColor('#444444')
-        .text('Paybill Number:', M + 16, y + 40)
-        .text('Account Number:', M + 16, y + 54)
-        .text('Amount:', M + 16, y + 68);
-      doc.fontSize(9).font('Helvetica-Bold').fillColor(NAVY)
-        .text('625625', M + 148, y + 40)
-        .text('20190955', M + 148, y + 54)
-        .text(fmtKES(inv.total_amount), M + 148, y + 68);
-
+    if (pay.bank) {
       // Right column — Bank Transfer
       doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#555555')
         .text('BANK TRANSFER', rx, y + 26);
@@ -443,322 +475,390 @@ async function generatePdf(req, res, next) {
         .text('Bank:', rx, y + 54)
         .text('Account No:', rx, y + 68);
       doc.fontSize(9).font('Helvetica-Bold').fillColor(NAVY)
-        .text('Life Companion Welfare', rv, y + 40)
-        .text('National Bank', rv, y + 54)
-        .text('7718883051', rv, y + 68);
-
-      return y + BH;
-    }
-
-    // =========================================================================
-    // ── PAGE 1: Full header band ─────────────────────────────────────────────
-    // =========================================================================
-    if (isFrancis) {
-      // Letterhead style: logo on white with an accent rule beneath
-      doc.rect(0, 0, PW, 120).fill('#FFFFFF');
-      doc.image(brand.logo, M, 14, { fit: [150, 93] });
-      const tx = M + 165;
-      doc.fontSize(18).font('Helvetica-Bold').fillColor(NAVY)
-        .text(brand.name, tx, 30, { width: CW - 165 - 140 });
-      doc.fontSize(8.5).font('Helvetica').fillColor('#555555');
-      brand.headerLines.forEach((line, i) => doc.text(line, tx, 55 + i * 12, { width: CW - 165 - 140 }));
-      doc.rect(0, 114, PW, 6).fill(GOLD);
-      doc.rect(PW - M - 130, 22, 130, 80).fill(NAVY);
-      doc.fontSize(20).font('Helvetica-Bold').fillColor('#FFFFFF')
-        .text('INVOICE', PW - M - 130, 32, { width: 130, align: 'center' });
-      doc.fontSize(7.5).font('Helvetica').fillColor('#DDDDDD')
-        .text('FUNERAL LAST EXPENSE COVER', PW - M - 125, 64, { width: 120, align: 'center' });
+        .text(pay.bank.accountName, rv, y + 40)
+        .text(pay.bank.bank, rv, y + 54)
+        .text(pay.bank.accountNo, rv, y + 68);
     } else {
-      doc.rect(0, 0, PW, 120).fill(NAVY);
-      doc.fontSize(22).font('Helvetica-Bold').fillColor(GOLD)
-        .text(brand.name, M, 28, { width: CW - 140 });
-      doc.fontSize(8.5).font('Helvetica').fillColor('#CCCCCC');
-      brand.headerLines.forEach((line, i) => doc.text(line, M, 57 + i * 12));
-      doc.rect(PW - M - 130, 22, 130, 80).fill(GOLD);
-      doc.fontSize(20).font('Helvetica-Bold').fillColor(NAVY)
-        .text('INVOICE', PW - M - 130, 32, { width: 130, align: 'center' });
+      // Right column — amount due
+      doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#555555')
+        .text('AMOUNT DUE', rx, y + 26);
+      doc.fontSize(16).font('Helvetica-Bold').fillColor(GOLD)
+        .text(fmtKES(inv.total_amount), rx, y + 42);
+      doc.fontSize(8).font('Helvetica').fillColor('#777777')
+        .text('Use your invoice number as reference', rx, y + 66);
     }
 
-    // ── Meta strip ──────────────────────────────────────────────────────────
-    let y = 140;
-    doc.rect(M, y, CW, 56).fill(LIGHT_GRAY);
+    return y + BH;
+  }
 
-    const c1 = M + 12;
-    const c2 = M + Math.floor(CW * 0.28);
-    const c3 = M + Math.floor(CW * 0.54);
-    const c4 = M + Math.floor(CW * 0.78);
-
-    doc.fontSize(7.5).font('Helvetica-Bold').fillColor('#777777')
-      .text('INVOICE NUMBER', c1, y + 8)
-      .text('DATE ISSUED', c2, y + 8)
-      .text('PAY BY DATE', c3, y + 8)
-      .text('STATUS', c4, y + 8);
-
-    doc.fontSize(10.5).font('Helvetica-Bold').fillColor(NAVY)
-      .text(inv.invoice_number, c1, y + 23);
-
-    const issueDate = new Date(inv.created_at).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' });
-    doc.fontSize(10).font('Helvetica').fillColor('#222222')
-      .text(issueDate, c2, y + 23);
-
-    const dueDateStr = inv.due_date
-      ? new Date(inv.due_date).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' })
-      : '—';
-    doc.fontSize(10).font('Helvetica').fillColor(inv.due_date ? '#D32F2F' : '#AAAAAA')
-      .text(dueDateStr, c3, y + 23);
-
-    const statusLabel = inv.status === 'paid' ? 'PAID' : 'PENDING PAYMENT';
-    const statusColor = inv.status === 'paid' ? GREEN : '#E67E22';
-    doc.fontSize(9).font('Helvetica-Bold').fillColor(statusColor)
-      .text(statusLabel, c4, y + 23);
-
-    // ── Billed To / Issued By ────────────────────────────────────────────────
-    y = 222;
-    const colW = CW / 2 - 10;
-    const rightX = M + colW + 20;
-
-    doc.fontSize(8).font('Helvetica-Bold').fillColor(GOLD).text('BILLED TO', M, y);
-    doc.moveTo(M, y + 13).lineTo(M + colW, y + 13).stroke(GOLD);
-    doc.fontSize(13).font('Helvetica-Bold').fillColor(NAVY)
-      .text(inv.client_name, M, y + 18, { width: colW });
-
-    const groupMembers = Array.isArray(inv.group_members) ? inv.group_members : null;
-    if (groupMembers) {
-      doc.fontSize(9).font('Helvetica').fillColor('#555555')
-        .text(`Group Invoice — ${groupMembers.length} Member${groupMembers.length > 1 ? 's' : ''}`, M, y + 36, { width: colW });
-    }
-
-    doc.fontSize(8).font('Helvetica-Bold').fillColor(GOLD).text('ISSUED BY', rightX, y);
-    doc.moveTo(rightX, y + 13).lineTo(rightX + colW, y + 13).stroke(GOLD);
-    doc.fontSize(12).font('Helvetica-Bold').fillColor(NAVY)
-      .text(brand.name, rightX, y + 18, { width: colW });
+  // =========================================================================
+  // ── PAGE 1: Full header band ─────────────────────────────────────────────
+  // =========================================================================
+  if (isFrancis) {
+    // Letterhead style: logo on white with an accent rule beneath
+    doc.rect(0, 0, PW, 120).fill('#FFFFFF');
+    doc.image(brand.logo, M, 14, { fit: [150, 93] });
+    const tx = M + 165;
+    doc.fontSize(18).font('Helvetica-Bold').fillColor(NAVY)
+      .text(brand.name, tx, 30, { width: CW - 165 - 140 });
     doc.fontSize(8.5).font('Helvetica').fillColor('#555555');
-    brand.issuedByLines.forEach((line, i) => doc.text(line, rightX, y + 36 + i * 12, { width: colW }));
+    brand.headerLines.forEach((line, i) => doc.text(line, tx, 55 + i * 12, { width: CW - 165 - 140 }));
+    doc.rect(0, 114, PW, 6).fill(GOLD);
+    doc.rect(PW - M - 130, 22, 130, 80).fill(NAVY);
+    doc.fontSize(20).font('Helvetica-Bold').fillColor('#FFFFFF')
+      .text('INVOICE', PW - M - 130, 32, { width: 130, align: 'center' });
+    doc.fontSize(7.5).font('Helvetica').fillColor('#DDDDDD')
+      .text('FUNERAL LAST EXPENSE COVER', PW - M - 125, 64, { width: 120, align: 'center' });
+  } else {
+    doc.rect(0, 0, PW, 120).fill(NAVY);
+    doc.fontSize(22).font('Helvetica-Bold').fillColor(GOLD)
+      .text(brand.name, M, 28, { width: CW - 140 });
+    doc.fontSize(8.5).font('Helvetica').fillColor('#CCCCCC');
+    brand.headerLines.forEach((line, i) => doc.text(line, M, 57 + i * 12));
+    doc.rect(PW - M - 130, 22, 130, 80).fill(GOLD);
+    doc.fontSize(20).font('Helvetica-Bold').fillColor(NAVY)
+      .text('INVOICE', PW - M - 130, 32, { width: 130, align: 'center' });
+  }
 
-    y = 330;
+  // ── Meta strip ──────────────────────────────────────────────────────────
+  let y = 140;
+  doc.rect(M, y, CW, 56).fill(LIGHT_GRAY);
 
-    // =========================================================================
-    if (groupMembers) {
-      // ── GROUP invoice: paginated per-member table ─────────────────────────
-      const ROW_H = 24;
-      const NUM_COL_W = 26;
-      const colMember = M + NUM_COL_W + 4;
-      const colPlan   = M + Math.floor(CW * 0.50);
-      const colCover  = M + Math.floor(CW * 0.68);
-      const colAmt    = M + Math.floor(CW * 0.84);
+  const c1 = M + 12;
+  const c2 = M + Math.floor(CW * 0.28);
+  const c3 = M + Math.floor(CW * 0.54);
+  const c4 = M + Math.floor(CW * 0.78);
 
-      // Space needed after the last data row before we can close the invoice:
-      // footnote (20) + total bar (36) + gap (20) + payment block (100) + gap (14)
-      const POST_TABLE_SPACE = 20 + 36 + 20 + 100 + 14;
+  doc.fontSize(7.5).font('Helvetica-Bold').fillColor('#777777')
+    .text('INVOICE NUMBER', c1, y + 8)
+    .text('DATE ISSUED', c2, y + 8)
+    .text('PAY BY DATE', c3, y + 8)
+    .text('STATUS', c4, y + 8);
 
-      y = drawGroupTableHeader(y, colMember, colPlan, colCover, colAmt);
+  doc.fontSize(10.5).font('Helvetica-Bold').fillColor(NAVY)
+    .text(inv.invoice_number, c1, y + 23);
 
-      let globalRowIndex = 0;
-      for (let i = 0; i < groupMembers.length; i++) {
-        const m = groupMembers[i];
+  const issueDate = new Date(inv.created_at).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' });
+  doc.fontSize(10).font('Helvetica').fillColor('#222222')
+    .text(issueDate, c2, y + 23);
 
-        // Need space for this row PLUS at minimum one more row OR post-table
-        const isLast = i === groupMembers.length - 1;
-        const spaceNeeded = isLast ? ROW_H + POST_TABLE_SPACE : ROW_H * 2;
+  const dueDateStr = inv.due_date
+    ? new Date(inv.due_date).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' })
+    : '—';
+  doc.fontSize(10).font('Helvetica').fillColor(inv.due_date ? '#D32F2F' : '#AAAAAA')
+    .text(dueDateStr, c3, y + 23);
 
-        if (y + spaceNeeded > PAGE_BOTTOM) {
-          y = addContinuationPage();
-          y = drawGroupTableHeader(y, colMember, colPlan, colCover, colAmt);
-          globalRowIndex = 0; // reset alternating shade per page
-        }
+  const statusLabel = inv.status === 'paid' ? 'PAID' : 'PENDING PAYMENT';
+  const statusColor = inv.status === 'paid' ? GREEN : '#E67E22';
+  doc.fontSize(9).font('Helvetica-Bold').fillColor(statusColor)
+    .text(statusLabel, c4, y + 23);
 
-        const shade = globalRowIndex % 2 === 1;
-        if (shade) {
-          doc.rect(M, y, CW, ROW_H).fill('#F4F6FA').stroke('#E8EBF0');
-        } else {
-          doc.rect(M, y, CW, ROW_H).fillColor('#FFFFFF').fill();
-          doc.rect(M, y, CW, ROW_H).stroke('#E8EBF0');
-        }
+  // ── Billed To / Issued By ────────────────────────────────────────────────
+  y = 222;
+  const colW = CW / 2 - 10;
+  const rightX = M + colW + 20;
 
-        // Row number
-        doc.fontSize(7.5).font('Helvetica').fillColor('#AAAAAA')
-          .text(String(i + 1), M + 4, y + 8, { width: NUM_COL_W - 4, align: 'right' });
+  doc.fontSize(8).font('Helvetica-Bold').fillColor(GOLD).text('BILLED TO', M, y);
+  doc.moveTo(M, y + 13).lineTo(M + colW, y + 13).stroke(GOLD);
+  doc.fontSize(13).font('Helvetica-Bold').fillColor(NAVY)
+    .text(inv.client_name, M, y + 18, { width: colW });
 
-        // Member name
-        doc.fontSize(9).font('Helvetica-Bold').fillColor(NAVY)
-          .text(m.client_name, colMember, y + 8, { width: colPlan - colMember - 4, ellipsis: true });
+  const groupMembers = Array.isArray(inv.group_members) ? inv.group_members : null;
+  if (groupMembers) {
+    doc.fontSize(9).font('Helvetica').fillColor('#555555')
+      .text(`Group Invoice — ${groupMembers.length} Member${groupMembers.length > 1 ? 's' : ''}`, M, y + 36, { width: colW });
+  }
 
-        // Plan label
-        let planLabel = `Opt ${m.cover_option}`;
-        const extras = [];
-        if (m.extra_children > 0) extras.push(`+${m.extra_children}ch`);
-        if (m.parents_above_80 > 0) extras.push(`+${m.parents_above_80}p80`);
-        if (extras.length) planLabel += ` (${extras.join(', ')})`;
-        doc.fontSize(8.5).font('Helvetica').fillColor('#555555')
-          .text(planLabel, colPlan, y + 8, { width: colCover - colPlan - 4 });
+  doc.fontSize(8).font('Helvetica-Bold').fillColor(GOLD).text('ISSUED BY', rightX, y);
+  doc.moveTo(rightX, y + 13).lineTo(rightX + colW, y + 13).stroke(GOLD);
+  doc.fontSize(12).font('Helvetica-Bold').fillColor(NAVY)
+    .text(brand.name, rightX, y + 18, { width: colW });
+  doc.fontSize(8.5).font('Helvetica').fillColor('#555555');
+  brand.issuedByLines.forEach((line, i) => doc.text(line, rightX, y + 36 + i * 12, { width: colW }));
 
-        // Cover amount
-        doc.fontSize(8.5).font('Helvetica').fillColor('#555555')
-          .text(m.cover, colCover, y + 8, { width: colAmt - colCover - 4 });
+  y = 330;
 
-        // Row total — right-aligned in last column
-        doc.fontSize(9).font('Helvetica-Bold').fillColor(NAVY)
-          .text(fmtKES(m.total), colAmt, y + 8, { width: CW - (colAmt - M) - 4, align: 'right' });
+  // =========================================================================
+  if (groupMembers) {
+    // ── GROUP invoice: paginated per-member table ─────────────────────────
+    const ROW_H = 24;
+    const NUM_COL_W = 26;
+    const colMember = M + NUM_COL_W + 4;
+    const colPlan   = M + Math.floor(CW * 0.50);
+    const colCover  = M + Math.floor(CW * 0.68);
+    const colAmt    = M + Math.floor(CW * 0.84);
 
-        // Thin bottom separator
-        doc.moveTo(M, y + ROW_H).lineTo(M + CW, y + ROW_H).stroke('#DDDDDD');
+    // Space needed after the last data row before we can close the invoice:
+    // footnote (20) + total bar (36) + gap (20) + payment block (100) + gap (14)
+    const POST_TABLE_SPACE = 20 + 36 + 20 + 100 + 14;
 
-        y += ROW_H;
-        globalRowIndex++;
-      }
+    y = drawGroupTableHeader(y, colMember, colPlan, colCover, colAmt);
 
-      // ── Footnote ──────────────────────────────────────────────────────────
-      if (y + POST_TABLE_SPACE > PAGE_BOTTOM) {
+    let globalRowIndex = 0;
+    for (let i = 0; i < groupMembers.length; i++) {
+      const m = groupMembers[i];
+
+      // Need space for this row PLUS at minimum one more row OR post-table
+      const isLast = i === groupMembers.length - 1;
+      const spaceNeeded = isLast ? ROW_H + POST_TABLE_SPACE : ROW_H * 2;
+
+      if (y + spaceNeeded > PAGE_BOTTOM) {
         y = addContinuationPage();
+        y = drawGroupTableHeader(y, colMember, colPlan, colCover, colAmt);
+        globalRowIndex = 0; // reset alternating shade per page
       }
 
-      doc.fontSize(7).font('Helvetica').fillColor('#AAAAAA')
-        .text(
-          '* Each amount includes the annual premium + KES 200 joining fee. Extra-child and parent-above-80 premiums are additional.',
-          M + 4, y + 5, { width: CW - 8 }
-        );
-      y += 20;
-
-      // ── Grand total bar ───────────────────────────────────────────────────
-      doc.rect(M, y, CW, 36).fill(NAVY);
-      doc.fontSize(10).font('Helvetica-Bold').fillColor(GOLD)
-        .text(`TOTAL  —  ${groupMembers.length} Member${groupMembers.length > 1 ? 's' : ''}`, M + 12, y + 12);
-      doc.fontSize(11).font('Helvetica-Bold').fillColor(GOLD)
-        .text(fmtKES(inv.total_amount), M + 12, y + 12, { width: CW - 24, align: 'right' });
-      y += 36;
-
-    } else if (!inv.cover_option) {
-      // ── GENERAL invoice: single total line item ───────────────────────────
-      doc.rect(M, y, CW, 26).fill(NAVY);
-      doc.fontSize(9).font('Helvetica-Bold').fillColor('#FFFFFF')
-        .text('DESCRIPTION', M + 12, y + 8)
-        .text('AMOUNT (KES)', M + CW - 130, y + 8);
-      y += 26;
-
-      const descText = inv.notes || 'General Invoice';
-      doc.rect(M, y, CW, 40).stroke('#E8EBF0');
-      doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
-        .text(inv.client_name, M + 12, y + 7, { width: CW - 160 });
-      if (inv.notes) {
-        doc.fontSize(8.5).font('Helvetica').fillColor('#666666')
-          .text(inv.notes, M + 12, y + 22, { width: CW - 160 });
-      }
-      doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
-        .text(fmtKES(inv.total_amount), M + CW - 130, y + 14, { width: 120, align: 'right' });
-      y += 40;
-
-      if (y + 36 > PAGE_BOTTOM) y = addContinuationPage();
-      doc.rect(M, y, CW, 36).fill(NAVY);
-      doc.fontSize(12).font('Helvetica-Bold').fillColor(GOLD)
-        .text('TOTAL', M + 12, y + 11)
-        .text(fmtKES(inv.total_amount), M + CW - 130, y + 11, { width: 120, align: 'right' });
-      y += 36;
-
-    } else {
-      // ── SINGLE invoice: line items ────────────────────────────────────────
-      const plan = findPlan(brand.key, inv.cover_option);
-
-      doc.rect(M, y, CW, 26).fill(NAVY);
-      doc.fontSize(9).font('Helvetica-Bold').fillColor('#FFFFFF')
-        .text('DESCRIPTION', M + 12, y + 8)
-        .text(brand.coverHeader, M + CW - 270, y + 8)
-        .text('AMOUNT (KES)', M + CW - 130, y + 8);
-      y += 26;
-
-      let rowShade = false;
-      function tableRow(label, sub, cover, amount) {
-        if (y + 34 > PAGE_BOTTOM) {
-          y = addContinuationPage();
-          // Redraw single-invoice table header on new page
-          doc.rect(M, y, CW, 26).fill(NAVY);
-          doc.fontSize(9).font('Helvetica-Bold').fillColor('#FFFFFF')
-            .text('DESCRIPTION', M + 12, y + 8)
-            .text(brand.coverHeader, M + CW - 270, y + 8)
-            .text('AMOUNT (KES)', M + CW - 130, y + 8);
-          y += 26;
-          rowShade = false;
-        }
-        if (rowShade) doc.rect(M, y, CW, 34).fill('#F4F6FA').stroke('#E8EBF0');
-        else doc.rect(M, y, CW, 34).stroke('#E8EBF0');
-        doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
-          .text(label, M + 12, y + 6, { width: CW - 280 });
-        if (sub) {
-          doc.fontSize(8).font('Helvetica').fillColor('#777777')
-            .text(sub, M + 12, y + 20, { width: CW - 280 });
-        }
-        doc.fontSize(10).font('Helvetica').fillColor('#444444')
-          .text(cover || '', M + CW - 270, y + 11, { width: 130 });
-        doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
-          .text(amount, M + CW - 130, y + 11, { width: 120, align: 'right' });
-        y += 34;
-        rowShade = !rowShade;
+      const shade = globalRowIndex % 2 === 1;
+      if (shade) {
+        doc.rect(M, y, CW, ROW_H).fill('#F4F6FA').stroke('#E8EBF0');
+      } else {
+        doc.rect(M, y, CW, ROW_H).fillColor('#FFFFFF').fill();
+        doc.rect(M, y, CW, ROW_H).stroke('#E8EBF0');
       }
 
-      const planLabel = plan ? `Annual Premium — Cover Option ${plan.option}` : 'Annual Premium';
-      tableRow(planLabel, brand.planDescription, plan ? plan.cover : '', fmtKES(inv.plan_amount));
-      tableRow('Membership / Joining Fee', 'One-time registration fee', '', fmtKES(inv.membership_fee));
+      // Row number
+      doc.fontSize(7.5).font('Helvetica').fillColor('#AAAAAA')
+        .text(String(i + 1), M + 4, y + 8, { width: NUM_COL_W - 4, align: 'right' });
 
-      const extraChildren = parseInt(inv.extra_children) || 0;
-      const parents80 = parseInt(inv.parents_above_80) || 0;
+      // Member name
+      doc.fontSize(9).font('Helvetica-Bold').fillColor(NAVY)
+        .text(m.client_name, colMember, y + 8, { width: colPlan - colMember - 4, ellipsis: true });
 
-      if (extraChildren > 0) {
-        const rate = extraChildRate(brand.key, inv.cover_option);
-        tableRow(
-          `Additional Children (${extraChildren})`,
-          `${extraChildren} child${extraChildren > 1 ? 'ren' : ''} beyond the included 4 — KES ${rate.toLocaleString('en-KE')} per child`,
-          '',
-          fmtKES(inv.extra_children_premium)
-        );
-      }
+      // Plan label
+      let planLabel = `Opt ${m.cover_option}`;
+      const extras = [];
+      if (m.extra_children > 0) extras.push(`+${m.extra_children}ch`);
+      if (m.parents_above_80 > 0) extras.push(`+${m.parents_above_80}p80`);
+      if (extras.length) planLabel += ` (${extras.join(', ')})`;
+      doc.fontSize(8.5).font('Helvetica').fillColor('#555555')
+        .text(planLabel, colPlan, y + 8, { width: colCover - colPlan - 4 });
 
-      if (parents80 > 0) {
-        const rate = parent80Rate(brand.key, inv.cover_option);
-        tableRow(
-          `Parents / Parents-in-law above 80 (${parents80})`,
-          `${parents80} person${parents80 > 1 ? 's' : ''} above 80 years — KES ${rate.toLocaleString('en-KE')} per person`,
-          '',
-          fmtKES(inv.parents_above_80_premium)
-        );
-      }
+      // Cover amount
+      doc.fontSize(8.5).font('Helvetica').fillColor('#555555')
+        .text(m.cover, colCover, y + 8, { width: colAmt - colCover - 4 });
 
-      if (inv.notes) tableRow('Notes', inv.notes, '', '');
+      // Row total — right-aligned in last column
+      doc.fontSize(9).font('Helvetica-Bold').fillColor(NAVY)
+        .text(fmtKES(m.total), colAmt, y + 8, { width: CW - (colAmt - M) - 4, align: 'right' });
 
-      // Total bar
-      if (y + 36 > PAGE_BOTTOM) {
-        y = addContinuationPage();
-      }
-      doc.rect(M, y, CW, 36).fill(NAVY);
-      doc.fontSize(12).font('Helvetica-Bold').fillColor(GOLD)
-        .text('TOTAL', M + 12, y + 11)
-        .text(fmtKES(inv.total_amount), M + CW - 130, y + 11, { width: 120, align: 'right' });
-      y += 36;
+      // Thin bottom separator
+      doc.moveTo(M, y + ROW_H).lineTo(M + CW, y + ROW_H).stroke('#DDDDDD');
 
-      if (isFrancis && plan) y = drawBenefitsBlock(y + 10, plan);
+      y += ROW_H;
+      globalRowIndex++;
     }
 
-    // ── Payment instructions (shared) ────────────────────────────────────────
-    y += 20;
-    if (y + 100 > PAGE_BOTTOM) {
+    // ── Footnote ──────────────────────────────────────────────────────────
+    if (y + POST_TABLE_SPACE > PAGE_BOTTOM) {
       y = addContinuationPage();
-      y += 10;
     }
-    drawPaymentBlock(y);
 
-    // ── Footer on final page ─────────────────────────────────────────────────
-    drawFooter();
+    doc.fontSize(7).font('Helvetica').fillColor('#AAAAAA')
+      .text(
+        '* Each amount includes the annual premium + KES 200 joining fee. Extra-child and parent-above-80 premiums are additional.',
+        M + 4, y + 5, { width: CW - 8 }
+      );
+    y += 20;
 
-    // ── Stamp "Page N of M" on every page using buffered pages ───────────────
-    const range = doc.bufferedPageRange();
-    const totalPages = range.count;
-    if (totalPages > 1) {
-      for (let p = 0; p < totalPages; p++) {
-        doc.switchToPage(range.start + p);
-        const fy = PH - FOOTER_H;
-        doc.fontSize(7).font('Helvetica').fillColor('#AAAAAA')
-          .text(`${p + 1} / ${totalPages}`, PW - M - 10, fy + 30, { width: 50, align: 'right' });
+    // ── Grand total bar ───────────────────────────────────────────────────
+    doc.rect(M, y, CW, 36).fill(NAVY);
+    doc.fontSize(10).font('Helvetica-Bold').fillColor(GOLD)
+      .text(`TOTAL  —  ${groupMembers.length} Member${groupMembers.length > 1 ? 's' : ''}`, M + 12, y + 12);
+    doc.fontSize(11).font('Helvetica-Bold').fillColor(GOLD)
+      .text(fmtKES(inv.total_amount), M + 12, y + 12, { width: CW - 24, align: 'right' });
+    y += 36;
+
+  } else if (!inv.cover_option) {
+    // ── GENERAL invoice: single total line item ───────────────────────────
+    doc.rect(M, y, CW, 26).fill(NAVY);
+    doc.fontSize(9).font('Helvetica-Bold').fillColor('#FFFFFF')
+      .text('DESCRIPTION', M + 12, y + 8)
+      .text('AMOUNT (KES)', M + CW - 130, y + 8);
+    y += 26;
+
+    const descText = inv.notes || 'General Invoice';
+    doc.rect(M, y, CW, 40).stroke('#E8EBF0');
+    doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
+      .text(inv.client_name, M + 12, y + 7, { width: CW - 160 });
+    if (inv.notes) {
+      doc.fontSize(8.5).font('Helvetica').fillColor('#666666')
+        .text(inv.notes, M + 12, y + 22, { width: CW - 160 });
+    }
+    doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
+      .text(fmtKES(inv.total_amount), M + CW - 130, y + 14, { width: 120, align: 'right' });
+    y += 40;
+
+    if (y + 36 > PAGE_BOTTOM) y = addContinuationPage();
+    doc.rect(M, y, CW, 36).fill(NAVY);
+    doc.fontSize(12).font('Helvetica-Bold').fillColor(GOLD)
+      .text('TOTAL', M + 12, y + 11)
+      .text(fmtKES(inv.total_amount), M + CW - 130, y + 11, { width: 120, align: 'right' });
+    y += 36;
+
+  } else {
+    // ── SINGLE invoice: line items ────────────────────────────────────────
+    const plan = findPlan(brand.key, inv.cover_option);
+
+    doc.rect(M, y, CW, 26).fill(NAVY);
+    doc.fontSize(9).font('Helvetica-Bold').fillColor('#FFFFFF')
+      .text('DESCRIPTION', M + 12, y + 8)
+      .text(brand.coverHeader, M + CW - 270, y + 8)
+      .text('AMOUNT (KES)', M + CW - 130, y + 8);
+    y += 26;
+
+    let rowShade = false;
+    function tableRow(label, sub, cover, amount) {
+      if (y + 34 > PAGE_BOTTOM) {
+        y = addContinuationPage();
+        // Redraw single-invoice table header on new page
+        doc.rect(M, y, CW, 26).fill(NAVY);
+        doc.fontSize(9).font('Helvetica-Bold').fillColor('#FFFFFF')
+          .text('DESCRIPTION', M + 12, y + 8)
+          .text(brand.coverHeader, M + CW - 270, y + 8)
+          .text('AMOUNT (KES)', M + CW - 130, y + 8);
+        y += 26;
+        rowShade = false;
       }
+      if (rowShade) doc.rect(M, y, CW, 34).fill('#F4F6FA').stroke('#E8EBF0');
+      else doc.rect(M, y, CW, 34).stroke('#E8EBF0');
+      doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
+        .text(label, M + 12, y + 6, { width: CW - 280 });
+      if (sub) {
+        doc.fontSize(8).font('Helvetica').fillColor('#777777')
+          .text(sub, M + 12, y + 20, { width: CW - 280 });
+      }
+      doc.fontSize(10).font('Helvetica').fillColor('#444444')
+        .text(cover || '', M + CW - 270, y + 11, { width: 130 });
+      doc.fontSize(10).font('Helvetica-Bold').fillColor(NAVY)
+        .text(amount, M + CW - 130, y + 11, { width: 120, align: 'right' });
+      y += 34;
+      rowShade = !rowShade;
     }
 
+    const planLabel = plan ? `Annual Premium — Cover Option ${plan.option}` : 'Annual Premium';
+    tableRow(planLabel, brand.planDescription, plan ? plan.cover : '', fmtKES(inv.plan_amount));
+    tableRow('Membership / Joining Fee', 'One-time registration fee', '', fmtKES(inv.membership_fee));
+
+    const extraChildren = parseInt(inv.extra_children) || 0;
+    const parents80 = parseInt(inv.parents_above_80) || 0;
+
+    if (extraChildren > 0) {
+      const rate = extraChildRate(brand.key, inv.cover_option);
+      tableRow(
+        `Additional Children (${extraChildren})`,
+        `${extraChildren} child${extraChildren > 1 ? 'ren' : ''} beyond the included 4 — KES ${rate.toLocaleString('en-KE')} per child`,
+        '',
+        fmtKES(inv.extra_children_premium)
+      );
+    }
+
+    if (parents80 > 0) {
+      const rate = parent80Rate(brand.key, inv.cover_option);
+      tableRow(
+        `Parents / Parents-in-law above 80 (${parents80})`,
+        `${parents80} person${parents80 > 1 ? 's' : ''} above 80 years — KES ${rate.toLocaleString('en-KE')} per person`,
+        '',
+        fmtKES(inv.parents_above_80_premium)
+      );
+    }
+
+    if (inv.notes) tableRow('Notes', inv.notes, '', '');
+
+    // Total bar
+    if (y + 36 > PAGE_BOTTOM) {
+      y = addContinuationPage();
+    }
+    doc.rect(M, y, CW, 36).fill(NAVY);
+    doc.fontSize(12).font('Helvetica-Bold').fillColor(GOLD)
+      .text('TOTAL', M + 12, y + 11)
+      .text(fmtKES(inv.total_amount), M + CW - 130, y + 11, { width: 120, align: 'right' });
+    y += 36;
+
+    if (isFrancis && plan) y = drawBenefitsBlock(y + 10, plan);
+  }
+
+  // ── Payment instructions (shared) ────────────────────────────────────────
+  y += 20;
+  if (y + 100 > PAGE_BOTTOM) {
+    y = addContinuationPage();
+    y += 10;
+  }
+  drawPaymentBlock(y);
+
+  // ── Footer on final page ─────────────────────────────────────────────────
+  drawFooter();
+
+  // ── Stamp "Page N of M" on every page using buffered pages ───────────────
+  const totalPages = doc.bufferedPageRange().count - startPage;
+  if (totalPages > 1) {
+    for (let p = 0; p < totalPages; p++) {
+      doc.switchToPage(startPage + p);
+      const fy = PH - FOOTER_H;
+      doc.fontSize(7).font('Helvetica').fillColor('#AAAAAA')
+        .text(`${p + 1} / ${totalPages}`, PW - M - 10, fy + 30, { width: 50, align: 'right' });
+    }
+  }
+
+}
+
+// Load an invoice for PDF rendering; sends the error response and returns null if not allowed
+async function loadInvoiceForPdf(req, res) {
+  const role = req.user.role;
+  const isAdmin = role === 'admin' || role === 'super_admin';
+  const result = await pool.query(
+    `SELECT i.*, u.full_name AS created_by_name, u.role AS created_by_role
+     FROM invoices i
+     JOIN users u ON u.id = i.created_by
+     WHERE i.id = $1`,
+    [req.params.id]
+  );
+  if (!result.rows.length) {
+    res.status(404).json({ success: false, error: 'Invoice not found' });
+    return null;
+  }
+  const inv = result.rows[0];
+  if (!isAdmin && inv.created_by !== req.user.id) {
+    res.status(403).json({ success: false, error: 'Access denied' });
+    return null;
+  }
+  return inv;
+}
+
+async function generatePdf(req, res, next) {
+  try {
+    const inv = await loadInvoiceForPdf(req, res);
+    if (!inv) return;
+
+    const withPolicy = req.query.policy === '1' && hasPolicy(inv);
+    const doc = new PDFDocument({ margin: 0, size: 'A4', bufferPages: true });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="invoice-${inv.invoice_number}.pdf"`);
+    doc.pipe(res);
+
+    drawInvoice(doc, inv);
+    if (withPolicy) drawPoliciesForInvoice(doc, inv, { newPage: true });
+
+    doc.flushPages();
+    doc.end();
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function generatePolicyPdf(req, res, next) {
+  try {
+    const inv = await loadInvoiceForPdf(req, res);
+    if (!inv) return;
+    if (!hasPolicy(inv)) {
+      return res.status(400).json({ success: false, error: 'This invoice has no policy document' });
+    }
+
+    const name = inv.policy_number || inv.invoice_number;
+    const doc = new PDFDocument({ margin: 0, size: 'A4', bufferPages: true });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="policy-${name}.pdf"`);
+    doc.pipe(res);
+    drawPoliciesForInvoice(doc, inv, { newPage: false });
     doc.flushPages();
     doc.end();
   } catch (err) {
@@ -830,6 +930,7 @@ async function createGroupInvoice(req, res, next) {
 
     const dbClient = await pool.connect();
     try {
+      if (company === 'francis') await assignMemberPolicyNumbers(dbClient, resolvedMembers);
       const invoiceNumber = await generateInvoiceNumber(dbClient, company);
       const result = await dbClient.query(
         `INSERT INTO invoices
@@ -915,15 +1016,18 @@ async function bulkCreateInvoices(req, res, next) {
           const parent80Premium = parent80Rate(company, optNum) * parent80Count;
           const total = planAmt + memberFee + extraChildPremium + parent80Premium;
           const invoiceNumber = await generateInvoiceNumber(dbClient, company);
+          const policyNumber = company === 'francis' ? await nextPolicyNumber(dbClient) : null;
 
           const result = await dbClient.query(
             `INSERT INTO invoices
               (invoice_number, created_by, member_id, client_name, cover_option, plan_amount, membership_fee,
-               extra_children, parents_above_80, extra_children_premium, parents_above_80_premium, total_amount, notes, company)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+               extra_children, parents_above_80, extra_children_premium, parents_above_80_premium, total_amount, notes, company,
+               policy_number, dependants)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
              RETURNING *`,
             [invoiceNumber, req.user.id, member_id || null, client_name.trim(), optNum, planAmt, memberFee,
-             extraChildCount, parent80Count, extraChildPremium, parent80Premium, total, notes || null, company]
+             extraChildCount, parent80Count, extraChildPremium, parent80Premium, total, notes || null, company,
+             policyNumber, company === 'francis' ? '[]' : null]
           );
 
           created.push(result.rows[0]);
@@ -945,4 +1049,4 @@ async function bulkCreateInvoices(req, res, next) {
   }
 }
 
-module.exports = { createInvoice, updateInvoice, createGroupInvoice, bulkCreateInvoices, listInvoices, getInvoice, generatePdf, updateStatus };
+module.exports = { createInvoice, updateInvoice, createGroupInvoice, bulkCreateInvoices, listInvoices, getInvoice, generatePdf, generatePolicyPdf, updateStatus };

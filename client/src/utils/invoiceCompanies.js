@@ -7,6 +7,7 @@ export const INVOICE_COMPANIES = {
     shortName: 'My Life Companion',
     tagline: 'Underwritten by Old Mutual',
     coverLabel: 'Cover',
+    payment: { paybill: '625625', account: '20190955' },
     plans: [
       { option: 1, name: 'Option 1 — KES 1,500/yr', premium: 1500, cover: 'KES 50,000' },
       { option: 2, name: 'Option 2 — KES 3,000/yr', premium: 3000, cover: 'KES 100,000' },
@@ -25,6 +26,8 @@ export const INVOICE_COMPANIES = {
     tagline: 'Busia · Funeral last expense cover',
     logo: '/assets/francis-logo.png',
     coverLabel: 'Cash Token',
+    payment: { paybill: '247247', account: '855707', accountName: 'Francis Funeral Home Busia' },
+    hasPolicy: true,
     plans: [
       {
         option: 1, name: 'Option 1 — KES 1,500/yr', premium: 1500, cover: 'KES 5,000',

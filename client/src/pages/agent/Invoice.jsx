@@ -3,13 +3,15 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Layout from '../../components/Layout';
 import api from '../../services/api';
 import { getInvoiceCompany } from '../../utils/invoiceCompanies';
+import { downloadPdf, downloadPolicyPdf, invoiceHasPolicy } from '../../utils/invoicePdf';
+import PolicyFields, { cleanDependants, dependantsFromInvoice } from '../../components/PolicyFields';
 import InvoiceCompanyTabs, { InvoicePreviewBrand, InvoicePlanBenefits, previewPanelBg } from '../../components/InvoiceCompanyTabs';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import {
   MdReceiptLong, MdDownload, MdSearch, MdExpandMore, MdExpandLess,
   MdGroupAdd, MdAdd, MdDelete, MdCheckCircle, MdPerson, MdChildCare, MdElderly,
-  MdEdit, MdClose, MdSave, MdBusiness,
+  MdEdit, MdClose, MdSave, MdBusiness, MdDescription,
 } from 'react-icons/md';
 
 function fmtKES(amount) {
@@ -20,24 +22,11 @@ function emptyRow() {
   return { _id: Math.random(), client_name: '', cover_option: '3', extra_children: 0, parents_above_80: 0 };
 }
 
-async function downloadPdf(id, invoiceNumber) {
-  const token = localStorage.getItem('token');
-  const response = await fetch(`/api/v1/invoices/${id}/pdf`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!response.ok) throw new Error('Failed to download PDF');
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `invoice-${invoiceNumber}.pdf`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 export default function AgentInvoice() {
   const queryClient = useQueryClient();
   const [company, setCompany] = useState('mlc');
+  const [policyNumber, setPolicyNumber] = useState('');
+  const [dependants, setDependants] = useState([]);
   const brand = getInvoiceCompany(company);
   const COVER_PLANS = brand.plans;
   const extraChildRate = (option) => brand.extraChildRates[option] || 0;
@@ -85,7 +74,7 @@ export default function AgentInvoice() {
       } else {
         toast.success(`Invoice ${invoice.invoice_number} created`);
         setPdfLoading(invoice.id);
-        try { await downloadPdf(invoice.id, invoice.invoice_number); }
+        try { await downloadPdf(invoice); }
         catch { toast.error('Invoice saved but PDF download failed.'); }
         finally { setPdfLoading(null); }
         resetForms();
@@ -104,7 +93,7 @@ export default function AgentInvoice() {
       } else {
         toast.success(`Invoice ${invoice.invoice_number} updated`);
         setPdfLoading(invoice.id);
-        try { await downloadPdf(invoice.id, invoice.invoice_number); }
+        try { await downloadPdf(invoice); }
         catch { toast.error('Invoice updated but PDF download failed.'); }
         finally { setPdfLoading(null); }
         clearEditingDraft();
@@ -131,6 +120,7 @@ export default function AgentInvoice() {
 
   function resetForms() {
     setForm({ client_name: '', cover_option: '', due_date: '', extra_children: 0, parents_above_80: 0 });
+    setPolicyNumber(''); setDependants([]);
     setSearch(''); setSearchResults([]);
     setCompanyForm({ client_name: '', total_amount: '', notes: '', due_date: '' });
   }
@@ -155,6 +145,8 @@ export default function AgentInvoice() {
   function startEditDraft(inv) {
     setEditingDraft(inv);
     setCompany(inv.company || 'mlc');
+    setPolicyNumber(inv.policy_number || '');
+    setDependants(dependantsFromInvoice(inv));
     setGroupResult(null);
     if (inv.group_members) {
       setMode('batch');
@@ -215,6 +207,7 @@ export default function AgentInvoice() {
       membership_fee: 200,
       extra_children: parseInt(form.extra_children) || 0,
       parents_above_80: parseInt(form.parents_above_80) || 0,
+      ...(brand.hasPolicy ? { policy_number: policyNumber.trim() || undefined, dependants: cleanDependants(dependants) } : {}),
       due_date: form.due_date || undefined,
       company,
       _action: action,
@@ -390,6 +383,10 @@ export default function AgentInvoice() {
                   </div>
                 </div>
 
+                {brand.hasPolicy && (
+                  <PolicyFields policyNumber={policyNumber} onPolicyNumberChange={setPolicyNumber} dependants={dependants} onDependantsChange={setDependants} />
+                )}
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Joining Fee</label>
@@ -456,7 +453,7 @@ export default function AgentInvoice() {
                   <span className="text-gray-300 text-sm">Total Due</span>
                   <span className="text-brand-gold font-bold text-xl">{selectedPlan ? fmtKES(total) : '—'}</span>
                 </div>
-                <div className="mt-3 bg-brand-gold/20 rounded-lg p-3 text-xs text-gray-300">M-Pesa Paybill <span className="text-brand-gold font-semibold">625625</span> · Account <span className="text-brand-gold font-semibold">20190955</span></div>
+                <div className="mt-3 bg-brand-gold/20 rounded-lg p-3 text-xs text-gray-300">M-Pesa Paybill <span className="text-brand-gold font-semibold">{brand.payment.paybill}</span> · Account <span className="text-brand-gold font-semibold">{brand.payment.account}</span>{brand.payment.accountName && <> · {brand.payment.accountName}</>}</div>
               </div>
             </div>
           </div>
@@ -516,7 +513,7 @@ export default function AgentInvoice() {
                   <span className="text-gray-300 text-sm">Total Due</span>
                   <span className="text-brand-gold font-bold text-xl">{companyForm.total_amount ? fmtKES(parseFloat(companyForm.total_amount) || 0) : '—'}</span>
                 </div>
-                <div className="mt-3 bg-brand-gold/20 rounded-lg p-3 text-xs text-gray-300">M-Pesa Paybill <span className="text-brand-gold font-semibold">625625</span> · Account <span className="text-brand-gold font-semibold">20190955</span></div>
+                <div className="mt-3 bg-brand-gold/20 rounded-lg p-3 text-xs text-gray-300">M-Pesa Paybill <span className="text-brand-gold font-semibold">{brand.payment.paybill}</span> · Account <span className="text-brand-gold font-semibold">{brand.payment.account}</span>{brand.payment.accountName && <> · {brand.payment.accountName}</>}</div>
               </div>
             </div>
           </div>
@@ -568,7 +565,7 @@ export default function AgentInvoice() {
                     </div>
                   )}
                   <button
-                    onClick={async () => { setPdfLoading(groupResult.id); try { await downloadPdf(groupResult.id, groupResult.invoice_number); } catch { toast.error('PDF download failed'); } finally { setPdfLoading(null); } }}
+                    onClick={async () => { setPdfLoading(groupResult.id); try { await downloadPdf(groupResult); } catch { toast.error('PDF download failed'); } finally { setPdfLoading(null); } }}
                     disabled={pdfLoading === groupResult.id}
                     className="w-full btn-primary flex items-center justify-center gap-2"
                   >
@@ -695,6 +692,7 @@ export default function AgentInvoice() {
                           <tr key={inv.id} className="hover:bg-gray-50">
                             <td className="px-4 py-2.5 font-mono text-xs text-brand-navy font-semibold">{inv.invoice_number}
                               <span className={`block mt-0.5 font-sans font-medium text-[10px] ${inv.company === 'francis' ? 'text-[#E8501E]' : 'text-gray-400'}`}>{getInvoiceCompany(inv.company).shortName}</span>
+                              {inv.policy_number && <span className="block font-sans text-[10px] text-gray-400">{inv.policy_number}</span>}
                             </td>
                             <td className="px-4 py-2.5 text-gray-700">{inv.client_name}</td>
                             <td className="px-4 py-2.5 text-gray-500 hidden sm:table-cell">
@@ -717,7 +715,12 @@ export default function AgentInvoice() {
                                     <MdEdit size={16} />
                                   </button>
                                 )}
-                                <button onClick={async () => { setPdfLoading(inv.id); try { await downloadPdf(inv.id, inv.invoice_number); } catch { toast.error('PDF download failed'); } finally { setPdfLoading(null); } }} disabled={pdfLoading === inv.id} className="p-1.5 rounded-lg hover:bg-brand-gold/10 text-brand-navy transition-colors disabled:opacity-50">
+                                {invoiceHasPolicy(inv) && (
+                                  <button onClick={async () => { setPdfLoading(`pol-${inv.id}`); try { await downloadPolicyPdf(inv); } catch { toast.error('Policy download failed'); } finally { setPdfLoading(null); } }} disabled={pdfLoading === `pol-${inv.id}`} title="Policy Document" className="p-1.5 rounded-lg hover:bg-orange-50 text-[#C55A11] transition-colors disabled:opacity-50">
+                                    {pdfLoading === `pol-${inv.id}` ? <div className="w-4 h-4 border-2 border-[#C55A11] border-t-transparent rounded-full animate-spin" /> : <MdDescription size={17} />}
+                                  </button>
+                                )}
+                                <button title={invoiceHasPolicy(inv) ? 'Invoice + Policy' : 'Download Invoice'} onClick={async () => { setPdfLoading(inv.id); try { await downloadPdf(inv); } catch { toast.error('PDF download failed'); } finally { setPdfLoading(null); } }} disabled={pdfLoading === inv.id} className="p-1.5 rounded-lg hover:bg-brand-gold/10 text-brand-navy transition-colors disabled:opacity-50">
                                   {pdfLoading === inv.id ? <div className="w-4 h-4 border-2 border-brand-gold border-t-transparent rounded-full animate-spin" /> : <MdDownload size={18} />}
                                 </button>
                               </div>
