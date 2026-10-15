@@ -4,14 +4,14 @@ export const MAX_DEPENDANTS = 13;
 const RELATIONSHIPS = ['Spouse', 'Son', 'Daughter', 'Father', 'Mother', 'Father-in-law', 'Mother-in-law'];
 
 export function emptyDependant() {
-  return { _id: Math.random(), name: '', relationship: '', dob: '', id_number: '' };
+  return { _id: Math.random(), name: '', relationship: '' };
 }
 
 // Strip UI-only keys and empty rows before sending to the API
 export function cleanDependants(rows) {
   return rows
     .filter((d) => d.name.trim())
-    .map(({ name, relationship, dob, id_number }) => ({ name: name.trim(), relationship, dob, id_number }));
+    .map(({ name, relationship }) => ({ name: name.trim(), relationship }));
 }
 
 export function dependantsFromInvoice(inv) {
@@ -61,18 +61,14 @@ export default function PolicyFields({ policyNumber, onPolicyNumberChange, depen
         )}
         <div className="space-y-2">
           {dependants.map((d, i) => (
-            <div key={d._id} className="bg-white border border-gray-100 rounded-lg p-2 space-y-2">
+            <div key={d._id} className="bg-white border border-gray-100 rounded-lg p-2">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-400 w-4 shrink-0">{i + 1}</span>
                 <input type="text" value={d.name} onChange={(e) => update(d._id, 'name', e.target.value)} placeholder="Full name" className={input} />
+                <input list="policy-relationships" value={d.relationship} onChange={(e) => update(d._id, 'relationship', e.target.value)} placeholder="Relationship" className={`${input} max-w-[38%]`} />
                 <button type="button" onClick={() => onDependantsChange(dependants.filter((x) => x._id !== d._id))} className="p-1.5 rounded hover:bg-red-50 text-red-400 shrink-0">
                   <MdDelete size={16} />
                 </button>
-              </div>
-              <div className="grid grid-cols-3 gap-2 pl-6">
-                <input list="policy-relationships" value={d.relationship} onChange={(e) => update(d._id, 'relationship', e.target.value)} placeholder="Relationship" className={input} />
-                <input type="date" value={d.dob} onChange={(e) => update(d._id, 'dob', e.target.value)} title="Date of birth" className={input} />
-                <input type="text" value={d.id_number} onChange={(e) => update(d._id, 'id_number', e.target.value)} placeholder="ID / Birth cert no." className={input} />
               </div>
             </div>
           ))}

@@ -22,12 +22,6 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function fmtDob(value) {
-  if (!value) return '';
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(value);
-}
-
 function sectionHeading(doc, text, y) {
   doc.fontSize(11.5).font('Helvetica-Bold').fillColor(SECTION).text(text, M, y);
   return y + 18;
@@ -129,9 +123,7 @@ function drawDependantsTable(doc, dependants, y) {
   const cols = [
     { key: 'no', label: 'No.', w: 34 },
     { key: 'name', label: 'Dependant details', w: 0 },
-    { key: 'relationship', label: 'Relationship', w: 92 },
-    { key: 'dob', label: 'D.O.B.\n(dd/mm/yyyy)', w: 84 },
-    { key: 'id_number', label: 'Identification No.', w: 98 },
+    { key: 'relationship', label: 'Relationship', w: 160 },
   ];
   cols[1].w = CW - cols.reduce((s, c) => s + c.w, 0);
 
@@ -160,8 +152,6 @@ function drawDependantsTable(doc, dependants, y) {
       no: String(i + 1),
       name: d.name || '',
       relationship: d.relationship || '',
-      dob: fmtDob(d.dob),
-      id_number: d.id_number || '',
     };
     x = M;
     cols.forEach((c) => {

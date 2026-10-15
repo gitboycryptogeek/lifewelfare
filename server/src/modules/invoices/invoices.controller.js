@@ -22,7 +22,7 @@ async function nextPolicyNumber(db) {
   return `FFH-POL-${new Date().getFullYear()}-${String(rows[0].n).padStart(5, '0')}`;
 }
 
-// Normalise dependants input into [{ name, relationship, dob, id_number }] (rows without a name are dropped)
+// Normalise dependants input into [{ name, relationship }] (rows without a name are dropped)
 function sanitizeDependants(input) {
   if (!Array.isArray(input)) return [];
   const clean = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
@@ -30,8 +30,6 @@ function sanitizeDependants(input) {
     .map((d) => ({
       name: clean(d?.name, 120),
       relationship: clean(d?.relationship, 40),
-      dob: clean(d?.dob, 10),
-      id_number: clean(d?.id_number, 40),
     }))
     .filter((d) => d.name)
     .slice(0, MAX_DEPENDANTS);
