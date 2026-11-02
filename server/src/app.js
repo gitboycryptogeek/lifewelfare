@@ -11,6 +11,7 @@ const cookieParser = require('cookie-parser');
 const { testConnection } = require('./config/db');
 const { errorHandler } = require('./middleware/errorHandler');
 const { autoAudit } = require('./middleware/audit');
+const { maintenanceMode } = require('./middleware/maintenance');
 
 const authRoutes = require('./modules/auth/auth.routes');
 const memberRoutes = require('./modules/members/members.routes');
@@ -27,6 +28,9 @@ const app = express();
 
 // Trust Heroku / reverse-proxy headers so rate-limiters see real client IPs
 app.set('trust proxy', 1);
+
+// Service suspension switch (MAINTENANCE_MODE / MAINTENANCE_START) — must run before everything else
+app.use(maintenanceMode);
 
 // Security middleware
 app.use(helmet({
