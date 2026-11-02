@@ -31,7 +31,8 @@ const PAGE = `<!DOCTYPE html>
 <body>
   <div class="card">
     <h1>Service Suspended</h1>
-    <p>This application has been suspended due to an outstanding payment for hosting and maintenance services.</p>
+    <p>This application has been suspended because the payment for hosting and maintenance services is overdue.</p>
+    <p><strong>Payment was due on 1st November 2026.</strong></p>
     <p>Please contact your service provider to settle the balance and restore access.</p>
     <div class="code">Error 503 &middot; Account suspended for non-payment</div>
   </div>
@@ -45,7 +46,7 @@ function maintenanceMode(req, res, next) {
   if (req.path.startsWith('/api')) {
     return res.status(503).json({
       success: false,
-      message: 'Service suspended due to outstanding payment. Please contact your service provider.',
+      message: 'Service suspended: hosting and maintenance payment was due on 1st November 2026. Please contact your service provider.',
     });
   }
   return res.status(503).type('html').send(PAGE);
